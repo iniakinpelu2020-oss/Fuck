@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aether IDE — Autonomous Coding Workspace</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            base: '#0b0f14',
+            panel: '#111827',
+            panel2: '#0f172a',
+            border: '#1f2937',
+            accent: '#3b82f6',
+            accent2: '#22c55e',
+            warn: '#f59e0b',
+            danger: '#ef4444',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="h-full bg-base text-gray-200 overflow-hidden">
+  <div id="app" class="h-full flex flex-col">
+    <!-- Top Bar -->
+    <header class="h-12 flex items-center justify-between px-3 border-b border-border bg-panel2 shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="font-semibold tracking-wide text-white">Aether IDE</div>
+        <div class="text-xs text-gray-400 hidden md:block">Two-in-one Web IDE & Autonomous Agent</div>
+        <span id="workspaceLabel" class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-300">No folder opened</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <button id="btnToggleWorkflow" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700">Workflow Canvas</button>
+        <button id="btnToggleTerminal" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700">Terminal</button>
+        <button id="btnOpenSettings" class="px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Integrations & Keys</button>
+        <button id="btnRunAgent" class="px-2 py-1 rounded bg-accent2 hover:bg-green-600 text-black font-medium">Run Agent</button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 flex min-h-0">
+      <!-- Left Panel -->
+      <aside id="leftPanel" class="w-72 min-w-[14rem] max-w-[28rem] border-r border-border bg-panel flex flex-col">
+        <div class="panel-tabs flex border-b border-border text-xs">
+          <button data-left-tab="explorer" class="left-tab flex-1 py-2 bg-gray-800">Explorer</button>
+          <button data-left-tab="github" class="left-tab flex-1 py-2 hover:bg-gray-800">GitHub</button>
+          <button data-left-tab="binary" class="left-tab flex-1 py-2 hover:bg-gray-800">Binary</button>
+        </div>
+        <div class="flex-1 min-h-0 overflow-hidden">
+          <div id="tab-explorer" class="left-tab-panel h-full flex flex-col p-2 gap-2">
+            <div class="flex gap-1">
+              <button id="btnOpenFolder" class="flex-1 px-2 py-1 text-xs rounded bg-accent hover:bg-blue-600 text-white">Open Folder</button>
+              <button id="btnSaveFile" class="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600">Save</button>
+            </div>
+            <div class="flex gap-1">
+              <button id="btnNewFile" class="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700">New File</button>
+              <button id="btnDeleteFile" class="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-red-300">Delete</button>
+            </div>
+            <div class="text-[11px] text-gray-400">Local FS via Directory Picker when available; in-memory workspace otherwise.</div>
+            <div id="fileTree" class="flex-1 overflow-auto text-sm border border-border rounded bg-base p-1"></div>
+          </div>
+          <div id="tab-github" class="left-tab-panel hidden h-full flex flex-col p-2 gap-2">
+            <label class="text-xs text-gray-400">Clone public GitHub repository structure</label>
+            <input id="githubRepoInput" class="w-full px-2 py-1 rounded bg-base border border-border text-sm" placeholder="owner/repo or https://github.com/owner/repo" />
+            <input id="githubBranchInput" class="w-full px-2 py-1 rounded bg-base border border-border text-sm" placeholder="branch (optional, defaults to default branch)" />
+            <button id="btnCloneRepo" class="px-2 py-1 text-xs rounded bg-accent hover:bg-blue-600 text-white">Fetch Repository</button>
+            <div id="githubStatus" class="text-xs text-gray-400"></div>
+            <div class="text-[11px] text-gray-500">Uses GitHub REST API. Populates workspace tree; large repos may be rate-limited without a token.</div>
+          </div>
+          <div id="tab-binary" class="left-tab-panel hidden h-full flex flex-col p-2 gap-2">
+            <label class="text-xs text-gray-400">Inspect .apk, .exe, .dmg</label>
+            <div id="binaryDropZone" class="border-2 border-dashed border-gray-600 rounded p-4 text-center text-xs text-gray-400 cursor-pointer hover:border-accent">Drop binary/package here or click to select<input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dmg,.zip,.ipa" /></div>
+            <div class="flex gap-1">
+              <button id="btnAnalyzeBinary" class="flex-1 px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600">Analyze</button>
+              <button id="btnClearBinary" class="px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700">Clear</button>
+            </div>
+            <pre id="binaryOutput" class="flex-1 overflow-auto text-[11px] bg-base border border-border rounded p-2 whitespace-pre-wrap"></pre>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center Panel -->
+      <main class="flex-1 min-w-0 flex flex-col">
+        <div class="flex items-center justify-between px-2 py-1 border-b border-border bg-panel2 text-xs">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-gray-400">File:</span>
+            <span id="activeFileName" class="truncate text-gray-200">untitled.txt</span>
+            <span id="dirtyIndicator" class="hidden text-warn">● unsaved</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="languageSelect" class="bg-base border border-border rounded px-1 py-0.5">
+              <option value="plaintext">plaintext</option>
+              <option value="javascript">javascript</option>
+              <option value="typescript">typescript</option>
+              <option value="python">python</option>
+              <option value="html">html</option>
+              <option value="css">css</option>
+              <option value="json">json</option>
+              <option value="bash">bash</option>
+              <option value="go">go</option>
+              <option value="rust">rust</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="centerWorkspace" class="flex-1 min-h-0 flex flex-col">
+          <!-- Editor View -->
+          <div id="editorView" class="flex-1 min-h-0 flex flex-col">
+            <div id="editorContainer" class="flex-1 min-h-0 relative">
+              <div class="editor-wrap h-full flex">
+                <pre id="lineNumbers" class="line-numbers"></pre>
+                <div class="editor-stack flex-1 relative overflow-auto">
+                  <pre id="highlightLayer" aria-hidden="true" class="highlight-layer"></pre>
+                  <textarea id="codeEditor" spellcheck="false" class="code-editor"></textarea>
+                </div>
+              </div>
+            </div>
+            <div id="terminalPane" class="h-56 border-t border-border bg-black flex flex-col hidden">
+              <div class="flex items-center justify-between px-2 py-1 text-xs bg-panel2 border-b border-border">
+                <div class="flex items-center gap-2">
+                  <span>Terminal</span>
+                  <span id="terminalStatus" class="text-gray-400">disconnected</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <input id="terminalWsUrl" class="bg-base border border-border rounded px-1 py-0.5 w-64" placeholder="ws://localhost:3001/terminal" />
+                  <button id="btnTerminalConnect" class="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600">Connect</button>
+                  <button id="btnTerminalClear" class="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600">Clear</button>
+                </div>
+              </div>
+              <div id="xtermContainer" class="flex-1 min-h-0"></div>
+            </div>
+          </div>
+
+          <!-- Workflow View -->
+          <div id="workflowView" class="hidden flex-1 min-h-0 flex">
+            <div class="w-56 border-r border-border bg-panel p-2 overflow-auto text-xs">
+              <div class="font-semibold mb-2">Node Palette</div>
+              <div class="space-y-2">
+                <div>
+                  <div class="text-gray-400 mb-1">Triggers</div>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="trigger-manual">Manual Trigger</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-webhook">Webhook Trigger</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-cron">Cron Schedule</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-file">File Change</button>
+                </div>
+                <div>
+                  <div class="text-gray-400 mb-1">Actions</div>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="action-http">HTTP Request</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-code">Code Execution</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-ai">AI Agent Prompt</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-terminal">Terminal Command</button>
+                </div>
+                <div>
+                  <div class="text-gray-400 mb-1">Integrations</div>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="app-slack">Slack/Webhook App</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="app-github">GitHub API App</button>
+                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="app-custom">Custom Integration</button>
+                </div>
+              </div>
+              <div class="mt-4 space-y-1">
+                <button id="btnWorkflowRun" class="w-full px-2 py-1 rounded bg-accent2 hover:bg-green-600 text-black font-medium">Run Workflow</button>
+                <button id="btnWorkflowClear" class="w-full px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Clear Canvas</button>
+                <button id="btnWorkflowExport" class="w-full px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Export JSON</button>
+              </div>
+            </div>
+            <div class="flex-1 min-w-0 relative bg-base">
+              <svg id="workflowEdges" class="absolute inset-0 w-full h-full pointer-events-none"></svg>
+              <div id="workflowCanvas" class="absolute inset-0 overflow-auto workflow-grid"></div>
+            </div>
+            <div class="w-72 border-l border-border bg-panel p-2 overflow-auto text-xs">
+              <div class="font-semibold mb-2">Node Inspector</div>
+              <div id="nodeInspector" class="text-gray-400">Select a node to configure it.</div>
+              <div class="mt-4 font-semibold mb-1">Execution Log</div>
+              <pre id="workflowLog" class="h-64 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Right Panel -->
+      <aside id="rightPanel" class="w-96 min-w-[18rem] max-w-[34rem] border-l border-border bg-panel flex flex-col">
+        <div class="panel-tabs flex border-b border-border text-xs">
+          <button data-right-tab="agent" class="right-tab flex-1 py-2 bg-gray-800">Agent</button>
+          <button data-right-tab="mcp" class="right-tab flex-1 py-2 hover:bg-gray-800">MCP</button>
+          <button data-right-tab="rag" class="right-tab flex-1 py-2 hover:bg-gray-800">RAG</button>
+          <button data-right-tab="vault" class="right-tab flex-1 py-2 hover:bg-gray-800">Vault</button>
+        </div>
+        <div class="flex-1 min-h-0 overflow-hidden">
+          <div id="tab-agent" class="right-tab-panel h-full flex flex-col">
+            <div class="p-2 border-b border-border space-y-2 text-xs">
+              <div class="flex gap-2">
+                <select id="agentProvider" class="flex-1 bg-base border border-border rounded px-2 py-1">
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="anthropic">Anthropic-compatible</option>
+                  <option value="custom">Custom Endpoint</option>
+                </select>
+                <input id="agentModel" class="flex-1 bg-base border border-border rounded px-2 py-1" placeholder="model (e.g. gpt-4o-mini)" />
+              </div>
+              <input id="agentEndpoint" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="API endpoint (optional override)" />
+              <div>
+                <label class="text-gray-400">API Keys (one per line, auto-rotated on rate limit)</label>
+                <textarea id="apiKeysInput" rows="3" class="w-full bg-base border border-border rounded px-2 py-1 mt-1" placeholder="sk-...\nsk-..."></textarea>
+              </div>
+              <div class="flex items-center gap-2">
+                <label class="flex items-center gap-1"><input id="agentUseRag" type="checkbox" checked /> Use RAG context</label>
+                <label class="flex items-center gap-1"><input id="agentAutoApply" type="checkbox" checked /> Auto-apply edits</label>
+              </div>
+              <div id="agentKeyStatus" class="text-gray-400"></div>
+            </div>
+            <div id="chatMessages" class="flex-1 overflow-auto p-2 space-y-2 text-sm"></div>
+            <div class="p-2 border-t border-border space-y-2">
+              <textarea id="chatInput" rows="4" class="w-full bg-base border border-border rounded p-2 text-sm" placeholder="Ask the agent to inspect, edit, run workflows, or execute tools..."></textarea>
+              <div class="flex gap-2">
+                <button id="btnSendChat" class="flex-1 px-3 py-1.5 rounded bg-accent hover:bg-blue-600 text-white text-sm">Send</button>
+                <button id="btnIndexWorkspace" class="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm">Index Workspace</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-mcp" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
+            <div class="font-semibold">MCP Server Registry (JSON-RPC)</div>
+            <textarea id="mcpConfigInput" rows="8" class="w-full bg-base border border-border rounded p-2 font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
+            <div class="flex gap-2">
+              <button id="btnMcpConnect" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Connect / Refresh</button>
+              <button id="btnMcpDiscover" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Discover Tools</button>
+            </div>
+            <div class="text-gray-400">Connects to remote/local MCP endpoints over WebSocket JSON-RPC where available. Tool metadata is exposed to the agent.</div>
+            <div class="font-semibold mt-1">Connected Servers & Tools</div>
+            <pre id="mcpStatus" class="flex-1 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
+          </div>
+
+          <div id="tab-rag" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
+            <div class="font-semibold">Local Context Indexer (RAG, IndexedDB)</div>
+            <div class="flex gap-2">
+              <button id="btnRagReindex" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Reindex Workspace</button>
+              <button id="btnRagClear" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Clear Index</button>
+            </div>
+            <input id="ragQueryInput" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="Search indexed snippets..." />
+            <button id="btnRagSearch" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Search</button>
+            <div id="ragStats" class="text-gray-400"></div>
+            <pre id="ragResults" class="flex-1 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
+          </div>
+
+          <div id="tab-vault" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
+            <div class="font-semibold">App Integration & Connection Hub</div>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="vaultName" class="bg-base border border-border rounded px-2 py-1 col-span-2" placeholder="Integration name (e.g. GitHub, Slack, OpenAI)" />
+              <input id="vaultType" class="bg-base border border-border rounded px-2 py-1" placeholder="Type (api_key/oauth/webhook)" />
+              <input id="vaultUrl" class="bg-base border border-border rounded px-2 py-1" placeholder="Base URL / webhook URL" />
+              <textarea id="vaultSecret" rows="3" class="bg-base border border-border rounded px-2 py-1 col-span-2 font-mono" placeholder="Token / secret / JSON config"></textarea>
+            </div>
+            <div class="flex gap-2">
+              <button id="btnVaultSave" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Save Credential</button>
+              <button id="btnVaultExport" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Export</button>
+              <button id="btnVaultImport" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Import</button>
+            </div>
+            <div class="text-gray-400">Stored locally in browser storage for agent/workflow use. Avoid committing secrets.</div>
+            <div id="vaultList" class="flex-1 overflow-auto border border-border rounded bg-base p-2 space-y-2"></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/60 z-50 items-center justify-center p-4">
+      <div class="w-full max-w-3xl bg-panel border border-border rounded-lg shadow-xl max-h-[85vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-2 border-b border-border">
+          <div class="font-semibold">Integrations, Keys & Runtime Settings</div>
+          <button id="btnCloseSettings" class="text-gray-400 hover:text-white">✕</button>
+        </div>
+        <div class="p-4 overflow-auto grid md:grid-cols-2 gap-4 text-sm">
+          <div class="space-y-2">
+            <div class="font-medium">Agent Runtime</div>
+            <label class="block text-xs text-gray-400">Default system prompt</label>
+            <textarea id="settingSystemPrompt" rows="8" class="w-full bg-base border border-border rounded p-2 text-xs"></textarea>
+            <label class="block text-xs text-gray-400">Max RAG snippets</label>
+            <input id="settingRagK" type="number" min="1" max="20" value="6" class="w-full bg-base border border-border rounded px-2 py-1" />
+          </div>
+          <div class="space-y-2">
+            <div class="font-medium">Execution Bridges</div>
+            <label class="block text-xs text-gray-400">Terminal bridge WebSocket URL</label>
+            <input id="settingTerminalWs" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="ws://localhost:3001/terminal" />
+            <label class="block text-xs text-gray-400">Workflow webhook listener URL (optional backend)</label>
+            <input id="settingWebhookUrl" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="http://localhost:3001/webhook" />
+            <label class="block text-xs text-gray-400">GitHub token (optional, for higher rate limits/private clone metadata)</label>
+            <input id="settingGithubToken" type="password" class="w-full bg-base border border-border rounded px-2 py-1" />
+            <div class="text-xs text-gray-400">Settings persist in local browser storage.</div>
+          </div>
+        </div>
+        <div class="px-4 py-2 border-t border-border flex justify-end gap-2">
+          <button id="btnSaveSettings" class="px-3 py-1.5 rounded bg-accent hover:bg-blue-600 text-white text-sm">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toastContainer" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/fileTree.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/binary.js"></script>
+  <script src="js/rag.js"></script>
+  <script src="js/mcp.js"></script>
+  <script src="js/integrations.js"></script>
+  <script src="js/workflow.js"></script>
+  <script src="js/agent.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
