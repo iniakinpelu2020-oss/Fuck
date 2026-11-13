@@ -35,16 +35,21 @@ async function trySearxng(baseUrl, query, numResults) {
   if (!base) return null;
   const limit = Math.max(1, Math.min(10, Number(numResults) || 5));
   const url = `${base}/search?q=${encodeURIComponent(query)}&format=json&language=en&safesearch=1&pageno=1`;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = setTimeout(() => { try { controller && controller.abort(); } catch {} }, 8000);
   try {
     const res = await fetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
+      signal: controller ? controller.signal : undefined,
     });
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch { data = null; }
     if (!res.ok) {
-      return { ok: false, provider: 'searxng', error: (data && (data.error || data.message)) || `SearXNG error ${res.status}`, results: [] };
+      // Gracefully treat 502/upstream errors as unavailable so caller can fall back without stalling
+      const msg = (data && (data.error || data.message)) || `SearXNG error ${res.status}`;
+      return { ok: false, provider: 'searxng', status: res.status, error: msg, results: [] };
     }
     const results = normalizeResults(data?.results).slice(0, limit);
     let answer = null;
@@ -55,7 +60,10 @@ async function trySearxng(baseUrl, query, numResults) {
     }
     return { ok: true, provider: 'searxng', answer: answer || null, results };
   } catch (err) {
-    return { ok: false, provider: 'searxng', error: String(err && err.message || err), results: [] };
+    const msg = (err && err.name === 'AbortError') ? 'SearXNG request timed out' : String(err && err.message || err);
+    return { ok: false, provider: 'searxng', error: msg, results: [] };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

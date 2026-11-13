@@ -29,6 +29,15 @@
       if (t === 'websocket') return 'websocket';
       return url.startsWith('ws') ? 'websocket' : (url.startsWith('http') ? 'http' : 'websocket');
     },
+    async connectAll(configs = null) {
+      const servers = Array.isArray(configs) ? configs : (Array.isArray(AppState.mcpServers) ? AppState.mcpServers : []);
+      const enabled = servers.filter(s => s && s.enabled !== false && s.name && s.url);
+      for (const s of enabled) {
+        try { await this.connectServer(s); } catch {}
+      }
+      this.render();
+      return enabled.length;
+    },
     async connectFromConfig() {
       try {
         const servers = this.saveConfigFromUI();

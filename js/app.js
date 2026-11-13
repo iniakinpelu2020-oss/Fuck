@@ -16,6 +16,17 @@
       Integrations.init();
       Agent.init();
 
+      // Auto-connect MCP servers and discover tools on startup when enabled servers exist in saved settings
+      try {
+        const enabledMcp = (Array.isArray(AppState.mcpServers) ? AppState.mcpServers : []).filter(s => s && s.enabled !== false && s.name && s.url);
+        if (enabledMcp.length && window.MCP) {
+          Promise.resolve()
+            .then(() => (typeof MCP.connectAll === 'function' ? MCP.connectAll(enabledMcp) : null))
+            .then(() => (typeof MCP.discoverAll === 'function' ? MCP.discoverAll() : null))
+            .catch((e) => console.warn('MCP auto-connect failed', e));
+        }
+      } catch (e) { console.warn('MCP auto-connect init error', e); }
+
       if (AppState.files.size === 0) {
         AppState.workspaceName = 'Starter Workspace';
         AppState.upsertFile('src/index.js', "console.log('Hello from Apex IDE');\n");
