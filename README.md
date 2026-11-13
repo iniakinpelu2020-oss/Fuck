@@ -2,6 +2,15 @@
 
 Single-page, browser-based web IDE and autonomous coding agent workspace built with **HTML**, **Tailwind CSS (CDN)**, and **vanilla JavaScript**.
 
+## Cloudflare Managed AI (server-side proxy)
+
+Apex IDE can work out of the box on Cloudflare Pages using server-side keys (never exposed to frontend). Add these Environment Variables in **Cloudflare Pages → Settings → Environment variables**:
+1. `APEX_API_KEYS` — comma-separated upstream API keys for rotation (e.g. `key1,key2,key3`)
+2. `APEX_API_URL` — upstream OpenAI-compatible chat completions URL (e.g. `https://openrouter.ai/api/v1/chat/completions`)
+3. `APEX_DEFAULT_MODEL` — default model id (e.g. `openai/gpt-4o-mini`)
+
+`functions/api/chat.js` serves `/api/chat` with automatic key rotation on `429/401/403`; `_routes.json` limits Functions to `/api/*` so static assets stay free. If a user provides custom keys in the UI (BYOK), the frontend can send a custom `Authorization` header/endpoint override instead of using managed keys.
+
 ## Features
 
 ### Left Panel — Explorer, Local Access & Binary Support

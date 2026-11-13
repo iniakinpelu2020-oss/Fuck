@@ -41,12 +41,16 @@
       const keys = AppState.apiKeys || [];
       const el = document.getElementById('agentKeyStatus');
       if (!el) return;
-      const keyText = keys.length ? `API keys: ${keys.length} (active #${(AppState.apiKeyIndex % keys.length) + 1})` : 'No API keys configured';
+      const keyText = keys.length
+        ? `Custom API keys: ${keys.length} (active #${(AppState.apiKeyIndex % keys.length) + 1})`
+        : 'Apex Managed AI Active (or add custom keys below to override)';
       let ragText = '';
       if (window.RAG && RAG.stats) ragText = ` · RAG chunks: ${RAG.stats.chunks || 0}`;
       el.textContent = keyText + ragText;
-      el.className = 'badge ' + (keys.length ? 'badge-success' : 'badge-muted');
-      el.title = keys.length ? 'Multi-key rotation enabled' : 'Add API keys to enable agent requests';
+      el.className = 'badge badge-success';
+      el.title = keys.length
+        ? 'Custom multi-key rotation enabled (overrides managed proxy when used)'
+        : 'Using built-in Apex managed AI proxy (/api/chat). Add custom keys to override.';
     },
 
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
@@ -162,7 +166,10 @@
     getEndpoint(provider, override) {
       if (override) return override;
       if (provider === 'anthropic') return 'https://api.anthropic.com/v1/messages';
-      if (provider === 'openai-compatible') return 'https://api.openai.com/v1/chat/completions';
+      if (provider === 'openai-compatible') {
+        const hasCustomKeys = Array.isArray(AppState.apiKeys) && AppState.apiKeys.length > 0;
+        return hasCustomKeys ? 'https://api.openai.com/v1/chat/completions' : '/api/chat';
+      }
       return '';
     },
 
@@ -195,24 +202,29 @@
       this.persistAgentSettings();
       const provider = document.getElementById('agentProvider').value;
       const model = document.getElementById('agentModel').value.trim();
-      const endpoint = this.getEndpoint(provider, document.getElementById('agentEndpoint').value.trim());
+      const endpointOverride = document.getElementById('agentEndpoint').value.trim();
+      const endpoint = this.getEndpoint(provider, endpointOverride);
       if (!endpoint) throw new Error('No API endpoint configured for selected provider.');
-      const keys = (AppState.apiKeys && AppState.apiKeys.length) ? [...AppState.apiKeys] : [''];
+      const customKeys = (AppState.apiKeys && AppState.apiKeys.length) ? [...AppState.apiKeys] : [];
+      // Use built-in managed proxy when no custom keys and no endpoint override for OpenAI-compatible mode.
+      const useManagedProxy = provider === 'openai-compatible' && customKeys.length === 0 && !endpointOverride;
+      const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
       let lastError = null;
 
       for (let attempt = 0; attempt < total; attempt++) {
-        const idx = (AppState.apiKeyIndex + attempt) % total;
+        const idx = customKeys.length ? (AppState.apiKeyIndex + attempt) % total : 0;
         const key = keys[idx];
         const body = this.buildRequestBody(provider, model, system, promptText);
+        const headers = this.getHeaders(provider, key);
         try {
           const res = await fetch(endpoint, {
             method: 'POST',
-            headers: this.getHeaders(provider, key),
+            headers,
             body: JSON.stringify(body)
           });
-          if (res.status === 429 || res.status === 402 || res.status === 403) {
+          if ((res.status === 429 || res.status === 402 || res.status === 403) && customKeys.length > 1) {
             AppState.apiKeyIndex = (idx + 1) % total;
             this.updateKeyStatus();
             lastError = new Error(`Rate/auth limit on key index ${idx} (${res.status}). Rotating...`);
@@ -220,10 +232,11 @@
           }
           if (!res.ok) {
             const t = await res.text();
-            throw new Error(`API error ${res.status}: ${t.slice(0, 500)}`);
+            const prefix = useManagedProxy ? 'Managed proxy error' : 'API error';
+            throw new Error(`${prefix} ${res.status}: ${t.slice(0, 500)}`);
           }
           const data = await res.json();
-          AppState.apiKeyIndex = idx;
+          if (customKeys.length) AppState.apiKeyIndex = idx;
           this.updateKeyStatus();
           return this.extractAssistantText(provider, data);
         } catch (e) {

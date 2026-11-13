@@ -277,7 +277,7 @@
               <div class="card-surface p-2.5 space-y-2">
                 <div class="flex items-center justify-between gap-2">
                   <div class="text-[11px] font-medium text-slate-300 uppercase tracking-wider">Model / Endpoint</div>
-                  <span id="agentKeyStatus" class="badge badge-muted">No API keys configured</span>
+                  <span id="agentKeyStatus" class="badge badge-success">Apex Managed AI Active (or add custom keys below to override)</span>
                 </div>
                 <div class="grid grid-cols-1 gap-2">
                   <div class="grid grid-cols-2 gap-2">
@@ -299,11 +299,11 @@
                     <div class="mt-2 space-y-2">
                       <div class="space-y-1">
                         <label class="field-label" for="agentEndpoint">API endpoint override <span class="text-slate-600">(optional)</span></label>
-                        <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="https://api.openai.com/v1/chat/completions" />
+                        <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="/api/chat (managed) or custom endpoint" />
                       </div>
                       <div class="space-y-1">
                         <label class="field-label" for="apiKeysInput">API keys <span class="text-slate-600">(one per line, auto-rotated)</span></label>
-                        <textarea id="apiKeysInput" rows="2" class="input font-mono text-[11px]" placeholder="sk-...\nsk-..."></textarea>
+                        <textarea id="apiKeysInput" rows="2" class="input font-mono text-[11px]" placeholder="Optional BYOK override — sk-...\nsk-..."></textarea>
                       </div>
                     </div>
                   </details>
