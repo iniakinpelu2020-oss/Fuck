@@ -14,7 +14,9 @@
       RAG.init();
       MCP.init();
       Integrations.init();
+      if (window.Workspace && Workspace.init) Workspace.init();
       Agent.init();
+      this.bindFileUploads();
 
       // Auto-connect MCP servers and discover tools on startup when enabled servers exist in saved settings
       try {
@@ -69,6 +71,74 @@
       const close = document.getElementById('btnPreviewClose');
       if (refresh) refresh.addEventListener('click', () => this.renderPreview());
       if (close) close.addEventListener('click', () => this.hidePreview());
+    },
+
+    bindFileUploads() {
+      const chatInput = document.getElementById('chatFileInput');
+      const chatBtn = document.getElementById('btnChatAttach');
+      const wsInput = document.getElementById('workspaceFileUploadInput');
+      const wsBtn = document.getElementById('btnUploadWorkspaceFiles');
+
+      if (chatBtn && chatInput) {
+        chatBtn.addEventListener('click', () => chatInput.click());
+        chatInput.addEventListener('change', async () => {
+          if (chatInput.files && chatInput.files.length) {
+            await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(chatInput.files, { attachToChat: true, source: 'chat-attach' }) : null);
+          }
+          chatInput.value = '';
+        });
+      }
+      if (wsBtn && wsInput) {
+        wsBtn.addEventListener('click', () => wsInput.click());
+        wsInput.addEventListener('change', async () => {
+          if (wsInput.files && wsInput.files.length) {
+            await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(wsInput.files, { attachToChat: false, source: 'workspace-upload' }) : null);
+          }
+          wsInput.value = '';
+        });
+      }
+
+      // Drag-and-drop support on chat area (attach to chat)
+      const dropTargets = [
+        document.getElementById('chatDropZone'),
+        document.getElementById('chatMessages'),
+        document.getElementById('agentComposerWrap')
+      ].filter(Boolean);
+      dropTargets.forEach((zone) => {
+        if (zone.dataset.dropBound) return;
+        zone.dataset.dropBound = '1';
+        let dragDepth = 0;
+        const onDragOver = (e) => {
+          if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          zone.classList.add('ring-1', 'ring-accent2', 'bg-accent2/5');
+        };
+        const onDragEnter = (e) => {
+          if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+          e.preventDefault();
+          dragDepth++;
+          zone.classList.add('ring-1', 'ring-accent2', 'bg-accent2/5');
+        };
+        const onDragLeave = (e) => {
+          dragDepth = Math.max(0, dragDepth - 1);
+          if (dragDepth === 0) zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5');
+        };
+        const onDrop = async (e) => {
+          if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) {
+            dragDepth = 0; zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5'); return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          dragDepth = 0;
+          zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5');
+          await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(e.dataTransfer.files, { attachToChat: true, source: 'chat-drop' }) : null);
+        };
+        zone.addEventListener('dragenter', onDragEnter);
+        zone.addEventListener('dragover', onDragOver);
+        zone.addEventListener('dragleave', onDragLeave);
+        zone.addEventListener('drop', onDrop);
+      });
     },
     hidePreview() {
       const pane = document.getElementById('previewPane');

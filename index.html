@@ -103,16 +103,21 @@
                 <div class="text-xs font-medium text-slate-300">Local workspace</div>
                 <span class="badge badge-muted">File System Access</span>
               </div>
-              <div class="grid grid-cols-2 gap-2">
+              <div class="grid grid-cols-3 gap-2">
                 <button id="btnOpenFolder" class="btn-primary">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6m-3-3h6"/></svg>
                   Open Folder
+                </button>
+                <button id="btnUploadWorkspaceFiles" class="btn-secondary" title="Upload files into workspace (multi-file, mobile-friendly)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M20 16.5v1a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-1"/></svg>
+                  Upload Files
                 </button>
                 <button id="btnSaveFile" class="btn-secondary">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
                   Save File
                 </button>
               </div>
+              <input id="workspaceFileUploadInput" type="file" multiple accept="*/*" class="hidden" />
               <div class="grid grid-cols-2 gap-2">
                 <button id="btnNewFile" class="btn-secondary">New File</button>
                 <button id="btnDeleteFile" class="btn-secondary btn-danger-text">Delete Selected</button>
@@ -260,13 +265,18 @@
           <div id="tab-agent" class="right-tab-panel h-full flex flex-col min-h-0">
             <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll px-3 sm:px-6 py-4 space-y-3 text-sm"></div>
             <div id="agentComposerWrap" class="border-t border-border bg-panel2/30 shrink-0 sticky bottom-0 z-10 px-3 sm:px-6 py-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-4">
-              <div class="agent-composer max-w-3xl mx-auto w-full">
+              <div class="agent-composer max-w-3xl mx-auto w-full" id="chatDropZone">
+                <div id="chatAttachmentChips" class="hidden flex flex-wrap gap-2 mb-2"></div>
                 <label class="sr-only" for="chatInput">Agent instruction</label>
                 <div class="relative">
-                  <textarea id="chatInput" rows="1" class="input w-full pr-12 min-h-[3rem] max-h-48 resize-none" enterkeyhint="send" placeholder="Ask anything… I can search, edit code, analyze binaries, or run automations. (Enter to send, Shift+Enter for newline)"></textarea>
+                  <button id="btnChatAttach" type="button" class="absolute left-2 bottom-2 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 border border-border text-slate-300 hover:text-white transition-colors" title="Attach files (+)" aria-label="Attach files">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  </button>
+                  <textarea id="chatInput" rows="1" class="input w-full pl-12 pr-12 min-h-[3rem] max-h-48 resize-none" enterkeyhint="send" placeholder="Ask anything… attach files with + or drag & drop. (Enter to send, Shift+Enter for newline)"></textarea>
                   <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="absolute right-2 bottom-2 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-accent2 hover:bg-accent text-white shadow-glow transition-colors" title="Send (Enter)" aria-label="Send message">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="w-4 h-4" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
                   </button>
+                  <input id="chatFileInput" type="file" multiple accept="*/*" class="hidden" />
                 </div>
                 <div class="hidden" aria-hidden="true">
                   <button id="agent-send-btn" type="submit">Send</button>
@@ -464,6 +474,7 @@
   <script src="./js/rag.js"></script>
   <script src="./js/mcp.js"></script>
   <script src="./js/integrations.js"></script>
+  <script src="./js/workspace.js"></script>
   <script src="./js/agent.js"></script>
   <script src="./js/app.js"></script>
 </body>

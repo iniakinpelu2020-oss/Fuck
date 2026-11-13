@@ -129,7 +129,32 @@
       return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(b)}</span>`).join('')}</div>`;
     },
 
-    addMessage(role, content, meta = '', badges = []) {
+    renderAttachments(attachments) {
+      const list = Array.isArray(attachments) ? attachments : [];
+      if (!list.length) return '';
+      const items = list.map(att => {
+        if (!att) return '';
+        const name = this.escapeHtml(att.name || 'file');
+        const size = (window.Utils && Utils.formatBytes) ? Utils.formatBytes(att.size || 0) : ((att.size || 0) + ' B');
+        const meta = this.escapeHtml(att.kind === 'zip' && Array.isArray(att.extractedPaths)
+          ? `${size} · zip · ${att.extractedPaths.length} files`
+          : `${size} · ${(att.mime || att.kind || 'file')}`);
+        if (att.kind === 'image' && att.dataUrl) {
+          return `<div class="chat-attachment inline-flex items-center gap-2 mr-2 mb-2 px-2 py-1.5 rounded-lg border border-border bg-white/5 max-w-full">
+            <img src="${att.dataUrl}" alt="${name}" class="w-10 h-10 object-cover rounded border border-border shrink-0" />
+            <div class="min-w-0"><div class="text-xs text-slate-200 truncate max-w-[12rem]" title="${name}">${name}</div><div class="text-[10px] text-slate-400">${meta}</div></div>
+          </div>`;
+        }
+        const icon = att.kind === 'zip' ? '🗜️' : att.kind === 'text' ? '📄' : att.kind === 'binary' ? '📦' : '📎';
+        return `<div class="chat-attachment inline-flex items-center gap-2 mr-2 mb-2 px-2 py-1.5 rounded-lg border border-border bg-white/5 max-w-full">
+          <div class="w-8 h-8 rounded border border-border bg-white/5 flex items-center justify-center text-sm shrink-0">${icon}</div>
+          <div class="min-w-0"><div class="text-xs text-slate-200 truncate max-w-[12rem]" title="${name}">${name}</div><div class="text-[10px] text-slate-400">${meta}</div></div>
+        </div>`;
+      }).join('');
+      return items ? `<div class="chat-attachments mt-1.5 -mb-0.5 flex flex-wrap">${items}</div>` : '';
+    },
+
+    addMessage(role, content, meta = '', badges = [], attachments = []) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
       const div = document.createElement('div');
@@ -137,7 +162,10 @@
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>${this.renderBadges(badges)}`;
+      const text = String(content == null ? '' : content);
+      const bodyHtml = text ? `<pre class="chat-content">${this.renderMessageContent(content)}</pre>` : '';
+      const attachHtml = this.renderAttachments(attachments);
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${attachHtml}${bodyHtml}${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       return div;
@@ -259,25 +287,34 @@
       const input = document.getElementById('chatInput');
       if (!input) return;
       const prompt = input.value.trim();
-      if (!prompt) return;
+      const pendingAttachments = (window.Workspace && Workspace.getPending) ? Workspace.getPending() : [];
+      const hasAttachments = Array.isArray(pendingAttachments) && pendingAttachments.length > 0;
+      if (!prompt && !hasAttachments) return;
+
+      // consume attachments for this turn
+      const attachments = hasAttachments ? pendingAttachments.slice() : [];
+      if (hasAttachments && window.Workspace && Workspace.clearPending) Workspace.clearPending();
+
       // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
       if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
         input.value = ''; this.autoResizeChat();
-        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
-        this.addMessage('user', prompt);
+        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt || 'Attached files';
+        this.addMessage('user', prompt || '(attachments)', 'n8n', [], attachments);
         const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
-        const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
+        const r = await this.triggerN8n(message, { from: 'agent-command', attachmentsCount: attachments.length }, { source: 'agent-chat', showErrors: true });
         this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
         if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
         return;
       }
+
       input.value = ''; this.autoResizeChat();
-      this.addMessage('user', prompt);
+      const userText = prompt || (attachments.length ? `Attached ${attachments.length} file${attachments.length === 1 ? '' : 's'}` : '');
+      this.addMessage('user', userText, '', [], attachments);
       // Immediate animated "Thinking..." pulse inside assistant bubble
       const streamBubble = this.createStreamingAssistantBubble('chat');
       try {
-        await this.runPrompt(prompt, { fromUI: true, streamBubble });
+        await this.runPrompt(prompt || '', { fromUI: true, streamBubble, attachments });
       } catch (e) {
         if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         else this.addMessage('assistant', `Error: ${e.message}`);
@@ -302,8 +339,25 @@
     },
 
     buildRequestBody(provider, model, system, userContent, opts = {}) {
+      // Support multimodal content for vision-capable models (OpenAI-compatible): userContent may be
+      // a string or an array of content parts like [{type:'text',text:'...'},{type:'image_url',image_url:{url:'data:...'}}]
       if (provider === 'anthropic') {
-        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
+        let content = userContent;
+        // Anthropic expects content blocks; convert simple multimodal array if provided
+        if (Array.isArray(userContent)) {
+          content = userContent.map(part => {
+            if (!part) return null;
+            if (part.type === 'text') return { type: 'text', text: String(part.text || '') };
+            if (part.type === 'image_url' && part.image_url && part.image_url.url) {
+              const url = String(part.image_url.url);
+              const m = url.match(/^data:([^;]+);base64,(.+)$/);
+              if (m) return { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } };
+              return { type: 'text', text: `[Image: ${url}]` };
+            }
+            return { type: 'text', text: typeof part === 'string' ? part : JSON.stringify(part) };
+          }).filter(Boolean);
+        }
+        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content }] };
         if (model) body.model = model; else body.model = 'claude-3-5-sonnet-latest';
         return body; // Anthropic streaming protocol differs; keep non-streaming for compatibility
       }
@@ -668,6 +722,7 @@
       const autoApplyEl = document.getElementById('agentAutoApply');
       const useRag = opts.useRag ?? (useRagEl ? useRagEl.checked : true);
       const autoApply = autoApplyEl ? autoApplyEl.checked : true;
+      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       const toolNotes = [];
       let extraContext = '';
       let ragMeta = '';
@@ -710,6 +765,12 @@
       }
 
       let contextBlock = this.collectWorkspaceSummary();
+
+      // Attached files (universal upload): text/code content, zip extracted paths, binary metadata/hash/strings/headers, image notes
+      if (attachments.length && window.Workspace && Workspace.buildAgentAttachmentContext) {
+        const attachCtx = Workspace.buildAgentAttachmentContext(attachments);
+        if (attachCtx) extraContext += `\n\n${attachCtx}`;
+      }
 
       // Binary inspector: automatically include loaded/parsed binary analysis in agent context
       if (window.BinaryInspector) {
@@ -768,12 +829,24 @@
       }
 
       contextBlock += extraContext;
-      const payload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+      const userPromptText = String(prompt || '').trim() || (attachments.length ? 'Please analyze the attached file(s) and respond helpfully.' : '');
+      const textPayload = `${userPromptText}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+
+      // For vision-capable models, include uploaded images as image_url content parts
+      let userContent = textPayload;
+      const imageAtts = attachments.filter(a => a && a.kind === 'image' && a.dataUrl);
+      if (imageAtts.length) {
+        const parts = [{ type: 'text', text: textPayload }];
+        for (const img of imageAtts) {
+          parts.push({ type: 'image_url', image_url: { url: String(img.dataUrl) } });
+        }
+        userContent = parts;
+      }
 
       // 2) Stream response live (bubble already shows immediate "Thinking...")
       let answer = '';
       try {
-        answer = await this.callLLM(payload, {
+        answer = await this.callLLM(userContent, {
           stream: true,
           onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
         });
