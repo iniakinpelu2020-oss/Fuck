@@ -376,6 +376,19 @@
       if (newBtn) newBtn.addEventListener('click', () => { this.createNewChat(); closeDrawer(); });
       if (settingsBtn) settingsBtn.addEventListener('click', () => { closeDrawer(); this.openSettings(); });
 
+      // Drawer view switcher (Agent / Workspace / Editor)
+      ['drawerBtnAgent','drawerBtnWorkspace','drawerBtnEditor'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const target = el.dataset.paneTarget;
+          closeDrawer();
+          if (target === 'right') this.setView('agent');
+          else if (target === 'left') this.setView('workspace');
+          else if (target === 'center') this.setView('editor');
+        });
+      });
+
       // Event delegation for pin/delete/switch on chat history list
       const lists = [document.getElementById('chatHistoryPinned'), document.getElementById('chatHistoryRecent')];
       lists.forEach(list => {

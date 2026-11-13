@@ -43,7 +43,6 @@
       if (bridge && typeof bridge.subscribe === 'function') bridge.subscribe((state) => this.onN8nStatus(state));
       AppState.subscribe((evt, payload) => { if (evt === 'n8n:status') this.onN8nStatus(payload); });
       this.updateKeyStatus();
-      this.addMessage('assistant', 'Hi — I\'m Apex, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings (⚙️) if needed.');
     },
 
     autoResizeChat() {
