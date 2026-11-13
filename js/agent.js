@@ -1,46 +1,62 @@
 (function () {
   const Agent = {
+    _lastAutoAction: null,
+
     init() {
       document.querySelectorAll('#agent-send-btn, #agent-send-btn-inline, #btnSendChat, [data-agent-send]').forEach((btn) => {
         if (btn.dataset.sendBound) return;
         btn.dataset.sendBound = '1';
         btn.addEventListener('click', () => this.sendFromUI());
       });
-      document.getElementById('btnRunAgent').addEventListener('click', () => this.sendFromUI());
+      const runBtn = document.getElementById('btnRunAgent');
+      if (runBtn) runBtn.addEventListener('click', () => this.sendFromUI());
       const btnN8n = document.getElementById('btnTriggerN8n');
       if (btnN8n) btnN8n.addEventListener('click', () => this.triggerN8nFromUI());
-      document.getElementById('btnIndexWorkspace').addEventListener('click', async () => { await RAG.indexWorkspace(); this.updateKeyStatus(); });
-      document.getElementById('chatInput').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          this.sendFromUI();
-        }
-      });
+      const idxBtn = document.getElementById('btnIndexWorkspace');
+      if (idxBtn) idxBtn.addEventListener('click', async () => { await RAG.indexWorkspace(); this.updateKeyStatus(); });
+      const chat = document.getElementById('chatInput');
+      if (chat) {
+        chat.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendFromUI(); }
+        });
+        chat.addEventListener('input', () => this.autoResizeChat());
+        this.autoResizeChat();
+      }
       const keys = AppState.apiKeys || [];
-      document.getElementById('apiKeysInput').value = keys.join('\n');
-      document.getElementById('apiKeysInput').addEventListener('change', () => {
-        const arr = document.getElementById('apiKeysInput').value.split(/\n+/).map(s => s.trim()).filter(Boolean);
-        AppState.saveApiKeys(arr);
-        this.updateKeyStatus();
+      const keysEl = document.getElementById('apiKeysInput');
+      if (keysEl) {
+        keysEl.value = keys.join('\n');
+        keysEl.addEventListener('change', () => {
+          const arr = keysEl.value.split(/\n+/).map(s => s.trim()).filter(Boolean);
+          AppState.saveApiKeys(arr);
+          this.updateKeyStatus();
+        });
+      }
+      const ep = document.getElementById('agentEndpoint'); if (ep) ep.value = AppState.settings.agentEndpoint || '';
+      const model = document.getElementById('agentModel'); if (model) model.value = AppState.settings.agentModel || '';
+      const prov = document.getElementById('agentProvider'); if (prov) prov.value = AppState.settings.agentProvider || 'openai-compatible';
+      ['agentEndpoint','agentModel','agentProvider'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.addEventListener('change', () => this.persistAgentSettings());
       });
-      document.getElementById('agentEndpoint').value = AppState.settings.agentEndpoint || '';
-      document.getElementById('agentModel').value = AppState.settings.agentModel || '';
-      document.getElementById('agentProvider').value = AppState.settings.agentProvider || 'openai-compatible';
-      ['agentEndpoint','agentModel','agentProvider'].forEach(id => document.getElementById(id).addEventListener('change', () => this.persistAgentSettings()));
       AppState.subscribe((evt) => { if (evt === 'rag:indexed' || evt === 'rag:cleared' || evt === 'workspace:changed') this.updateKeyStatus(); });
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
-      if (bridge && typeof bridge.subscribe === 'function') {
-        bridge.subscribe((state) => this.onN8nStatus(state));
-      }
+      if (bridge && typeof bridge.subscribe === 'function') bridge.subscribe((state) => this.onN8nStatus(state));
       AppState.subscribe((evt, payload) => { if (evt === 'n8n:status') this.onN8nStatus(payload); });
       this.updateKeyStatus();
-      this.addMessage('assistant', 'Agent ready. Configure API keys, index workspace for RAG, and provide instructions. Edits can be auto-applied from JSON edit blocks.\n\nn8n-local-instance: configure webhook/auth in Vault, then use "Trigger n8n" or commands like `/n8n <message>` to send a JSON payload to your local n8n workflow.');
+      this.addMessage('assistant', 'Hi — I\'m Apex, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings (⚙️) if needed.');
+    },
+
+    autoResizeChat() {
+      const el = document.getElementById('chatInput');
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 192) + 'px';
     },
 
     persistAgentSettings() {
-      AppState.settings.agentEndpoint = document.getElementById('agentEndpoint').value.trim();
-      AppState.settings.agentModel = document.getElementById('agentModel').value.trim();
-      AppState.settings.agentProvider = document.getElementById('agentProvider').value;
+      const ep = document.getElementById('agentEndpoint'); if (ep) AppState.settings.agentEndpoint = ep.value.trim();
+      const model = document.getElementById('agentModel'); if (model) AppState.settings.agentModel = model.value.trim();
+      const prov = document.getElementById('agentProvider'); if (prov) AppState.settings.agentProvider = prov.value;
       AppState.saveSettings();
     },
 
@@ -48,16 +64,11 @@
       const keys = AppState.apiKeys || [];
       const el = document.getElementById('agentKeyStatus');
       if (!el) return;
-      const keyText = keys.length
-        ? `Custom API keys: ${keys.length} (active #${(AppState.apiKeyIndex % keys.length) + 1})`
-        : 'Apex Managed AI Active (or add custom keys below to override)';
-      let ragText = '';
-      if (window.RAG && RAG.stats) ragText = ` · RAG chunks: ${RAG.stats.chunks || 0}`;
-      el.textContent = keyText + ragText;
-      el.className = 'badge badge-success';
-      el.title = keys.length
-        ? 'Custom multi-key rotation enabled (overrides managed proxy when used)'
-        : 'Using built-in Apex managed AI proxy (/api/chat). Add custom keys to override.';
+      el.textContent = keys.length
+        ? `Custom keys: ${keys.length} (#${(AppState.apiKeyIndex % keys.length) + 1})`
+        : 'Apex Managed AI Active';
+      el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
+      el.title = keys.length ? 'Custom multi-key rotation enabled' : 'Using built-in managed AI proxy. Configure custom keys in Settings.';
     },
 
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
@@ -70,9 +81,8 @@
         if (m) {
           const lang = m[1].toLowerCase();
           const body = m[2].replace(/\n$/, '');
-          const cls = lang === 'json:edits' ? 'json-edits' : 'json-edits';
-          const label = lang === 'json:edits' ? 'json:edits diff' : 'json';
-          return `<details class="json-edits-card" ${lang === 'json:edits' ? 'open' : ''}><summary class="json-edits-summary"><span class="json-edits-dot"></span>${this.escapeHtml(label)}</summary><pre class="${cls}"><code>${this.escapeHtml(body)}</code></pre></details>`;
+          const label = lang === 'json:edits' ? 'json:edits' : 'json';
+          return `<details class="json-edits-card" ${lang === 'json:edits' ? 'open' : ''}><summary class="json-edits-summary"><span class="json-edits-dot"></span>${this.escapeHtml(label)}</summary><pre class="json-edits"><code>${this.escapeHtml(body)}</code></pre></details>`;
         }
         return `<span>${this.escapeHtml(part)}</span>`;
       }).join('');
@@ -84,14 +94,31 @@
       const div = document.createElement('div');
       div.className = `chat-msg ${role}`;
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
-      const icon = role === 'user'
-        ? '<span class="msg-avatar msg-avatar-user">U</span>'
-        : '<span class="msg-avatar msg-avatar-agent">A</span>';
+      const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
       div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       return div;
+    },
+
+    addStatusPill(text, state = 'running') {
+      const wrap = document.getElementById('chatMessages');
+      if (!wrap) return null;
+      const div = document.createElement('div');
+      div.className = `agent-status-pill ${state}`;
+      div.innerHTML = `<span class="pill-dot"></span><span class="pill-text"></span>`;
+      div.querySelector('.pill-text').textContent = text;
+      wrap.appendChild(div);
+      wrap.scrollTop = wrap.scrollHeight;
+      return div;
+    },
+    updateStatusPill(el, text, state = 'done') {
+      if (!el) return;
+      if (text) { const t = el.querySelector('.pill-text'); if (t) t.textContent = text; }
+      el.className = `agent-status-pill ${state}`;
+      const wrap = document.getElementById('chatMessages');
+      if (wrap) wrap.scrollTop = wrap.scrollHeight;
     },
 
     formatN8nBody(body) {
@@ -101,36 +128,33 @@
     },
 
     onN8nStatus(state) {
+      // Autonomous/background triggers surface via status pills in run flow; avoid noisy duplicate chat spam unless explicit UI trigger context.
       if (!state) return;
-      if (state.status === 'sending') {
-        this.addMessage('assistant', `n8n trigger: sending request...\nURL: ${state.url || '(not set)'}\nEvent: ${state.event || 'manual'}`, 'n8n');
-      } else if (state.status === 'success' || state.status === 'error') {
-        const lines = [];
-        lines.push(`n8n trigger ${state.status === 'success' ? 'completed' : 'failed'}`);
-        lines.push(`HTTP: ${state.httpStatus != null ? state.httpStatus : 'n/a'}`);
-        if (state.url) lines.push(`URL: ${state.url}`);
-        lines.push('');
-        lines.push('Execution / response data:');
-        lines.push(this.formatN8nBody(state.body));
-        this.addMessage('assistant', lines.join('\n'), 'n8n');
-      }
+      if (state.source === 'agent-chat' || state.source === 'agent-autonomous') return;
+      if (state.status === 'sending') this.addStatusPill('⚡ Running n8n workflow...', 'running');
+      else if (state.status === 'success' || state.status === 'error') this.addMessage('assistant', `n8n workflow ${state.status} (HTTP ${state.httpStatus ?? 'n/a'})\n${this.formatN8nBody(state.body)}`, 'n8n');
     },
 
     async triggerN8nFromUI() {
       const input = document.getElementById('chatInput');
       const prompt = (input?.value || '').trim();
-      if (input) input.value = '';
       const message = prompt.replace(/^\/(?:n8n|trigger)\s*/i, '').trim() || prompt || 'Hello from Apex IDE';
-      await this.triggerN8n(message, { from: 'agent-ui' });
+      if (prompt && input) input.value = '';
+      await this.triggerN8n(message, { from: 'settings-test', showUser: true });
     },
 
-    async triggerN8n(message, extra = {}) {
+    async triggerN8n(message, extra = {}, opts = {}) {
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
       if (!bridge || typeof bridge.trigger !== 'function') {
-        this.addMessage('assistant', 'n8n bridge is not available.', 'n8n');
-        return;
+        if (opts.showErrors !== false) this.addMessage('assistant', 'n8n webhook is not configured. Add it in Settings (⚙️).', 'n8n');
+        return { ok: false, error: 'not_configured' };
       }
-      this.addMessage('user', message, 'n8n trigger');
+      const url = typeof bridge.getWebhookUrl === 'function' ? bridge.getWebhookUrl() : '';
+      if (!url) {
+        if (opts.showErrors !== false) this.addMessage('assistant', 'n8n webhook URL is not set. Configure it in Settings (⚙️).', 'n8n');
+        return { ok: false, error: 'not_configured' };
+      }
+      if (opts.showUser) this.addMessage('user', message, 'n8n');
       const sessionId = `apex_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const payload = {
         message,
@@ -143,25 +167,29 @@
         ...extra
       };
       try {
-        await bridge.trigger('agent_chat', payload, { source: 'agent-chat' });
+        const res = await bridge.trigger('agent_chat', payload, { source: opts.source || 'agent-chat' });
+        return { ok: true, result: res };
       } catch (e) {
-        if (e && e.message && !String(e.message).includes('HTTP')) {
-          this.addMessage('assistant', `n8n trigger error: ${e.message}`, 'n8n');
-        }
+        return { ok: false, error: e.message || String(e) };
       }
     },
 
     async sendFromUI() {
       const input = document.getElementById('chatInput');
+      if (!input) return;
       const prompt = input.value.trim();
       if (!prompt) return;
+      // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
       if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
-        input.value = '';
-        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || 'Hello from Apex IDE';
-        await this.triggerN8n(message, { from: 'agent-command' });
+        input.value = ''; this.autoResizeChat();
+        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
+        this.addMessage('user', prompt);
+        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+        const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
+        this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
         return;
       }
-      input.value = '';
+      input.value = ''; this.autoResizeChat();
       this.addMessage('user', prompt);
       try {
         await this.runPrompt(prompt, { fromUI: true });
@@ -190,12 +218,11 @@
     buildRequestBody(provider, model, system, userContent) {
       if (provider === 'anthropic') {
         const body = { max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
-        if (model) body.model = model;
-        else body.model = 'claude-3-5-sonnet-latest';
+        if (model) body.model = model; else body.model = 'claude-3-5-sonnet-latest';
         return body;
       }
       const body = { temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
-      if (model) body.model = model;
+      if (model) body.model = model; // omit when empty so /api/chat uses server APEX_DEFAULT_MODEL
       return body;
     },
 
@@ -212,40 +239,32 @@
 
     async callWithRotation(promptText) {
       this.persistAgentSettings();
-      const provider = document.getElementById('agentProvider').value;
-      const model = document.getElementById('agentModel').value.trim();
-      const endpointOverride = document.getElementById('agentEndpoint').value.trim();
+      const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
+      const model = ((document.getElementById('agentModel') || {}).value || '').trim();
+      const endpointOverride = ((document.getElementById('agentEndpoint') || {}).value || '').trim();
       const endpoint = this.getEndpoint(provider, endpointOverride);
       if (!endpoint) throw new Error('No API endpoint configured for selected provider.');
       const customKeys = (AppState.apiKeys && AppState.apiKeys.length) ? [...AppState.apiKeys] : [];
-      // Use built-in managed proxy when no custom keys and no endpoint override for OpenAI-compatible mode.
       const useManagedProxy = provider === 'openai-compatible' && customKeys.length === 0 && !endpointOverride;
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
       let lastError = null;
-
       for (let attempt = 0; attempt < total; attempt++) {
         const idx = customKeys.length ? (AppState.apiKeyIndex + attempt) % total : 0;
         const key = keys[idx];
         const body = this.buildRequestBody(provider, model, system, promptText);
         const headers = this.getHeaders(provider, key);
         try {
-          const res = await fetch(endpoint, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(body)
-          });
+          const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
           if ((res.status === 429 || res.status === 402 || res.status === 403) && customKeys.length > 1) {
-            AppState.apiKeyIndex = (idx + 1) % total;
-            this.updateKeyStatus();
+            AppState.apiKeyIndex = (idx + 1) % total; this.updateKeyStatus();
             lastError = new Error(`Rate/auth limit on key index ${idx} (${res.status}). Rotating...`);
             continue;
           }
           if (!res.ok) {
             const t = await res.text();
-            const prefix = useManagedProxy ? 'Managed proxy error' : 'API error';
-            throw new Error(`${prefix} ${res.status}: ${t.slice(0, 500)}`);
+            throw new Error(`${useManagedProxy ? 'Managed proxy error' : 'API error'} ${res.status}: ${t.slice(0, 500)}`);
           }
           const data = await res.json();
           if (customKeys.length) AppState.apiKeyIndex = idx;
@@ -259,7 +278,7 @@
       throw lastError || new Error('All API keys failed.');
     },
 
-    collectWorkspaceSummary(limitFiles = 12, limitChars = 2000) {
+    collectWorkspaceSummary() {
       const active = AppState.getActiveFile();
       let out = `Workspace: ${AppState.workspaceName}\nActive file: ${AppState.activeFilePath || '(none)'}\nFiles (${AppState.files.size} total):\n`;
       out += [...AppState.files.keys()].slice(0, 80).map(p => `- ${p}`).join('\n');
@@ -268,43 +287,168 @@
     },
 
     parseAgentActions(text) {
-      const actions = { edits: [], terminal: [], notes: '' };
+      const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null };
       if (!text) return actions;
       const fences = [...text.matchAll(/```(?:json:edits|json)\s*([\s\S]*?)```/gi)];
       for (const m of fences) {
         const obj = Utils.safeJsonParse(m[1], null);
-        if (obj && (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || obj.notes)) {
+        if (obj && (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || obj.n8n || obj.notes)) {
           if (Array.isArray(obj.edits)) actions.edits.push(...obj.edits);
           if (Array.isArray(obj.terminal)) actions.terminal.push(...obj.terminal);
+          if (Array.isArray(obj.mcp)) actions.mcp.push(...obj.mcp);
+          if (obj.n8n) actions.n8n = obj.n8n;
           if (obj.notes) actions.notes += (actions.notes ? '\n' : '') + obj.notes;
         }
       }
       return actions;
     },
 
-    async runPrompt(prompt, opts = {}) {
-      const useRag = opts.useRag ?? document.getElementById('agentUseRag').checked;
-      const autoApply = document.getElementById('agentAutoApply').checked;
-      let contextBlock = this.collectWorkspaceSummary();
-      let ragMeta = '';
-      if (useRag) {
-        try {
-          const rag = await RAG.buildContext(prompt, AppState.settings.ragK);
-          if (rag.text) { contextBlock += `\n\n--- Retrieved RAG Context ---\n${rag.text}`; ragMeta = `${rag.results.length} snippets`; }
-        } catch (e) { ragMeta = `RAG error: ${e.message}`; }
+    // --- Autonomous tool routing heuristics ---
+    shouldSearch(prompt) {
+      const p = String(prompt || '').toLowerCase();
+      if (/(https?:\/\/)/.test(p)) return false; // direct URL fetch not our search tool
+      const intent = /(search|look up|lookup|google|find online|web|internet|docs|documentation|latest|current|today|news|release|version|changelog|price|weather|who is|what is|when did|how to .*(202\d|latest)|compare .* (vs|versus) .* (202\d|latest)|error .* fix .* (202\d|latest))/i;
+      const live = /(202[4-9]|latest|newest|current|recent|today|now|breaking)/i;
+      return intent.test(prompt) || (live.test(prompt) && /(what|who|when|which|news|release|version|docs|api)/i.test(prompt));
+    },
+    shouldN8n(prompt) {
+      const p = String(prompt || '').toLowerCase();
+      if (/^\/(?:n8n|trigger)\b/i.test(p)) return true;
+      const hasConfig = !!((window.ApexWorkflowBridge && ApexWorkflowBridge.getWebhookUrl && ApexWorkflowBridge.getWebhookUrl()) || (AppState.settings && AppState.settings.webhookUrl));
+      if (!hasConfig) return false;
+      return /(n8n|workflow automation|run (the )?workflow|trigger (the )?workflow|zapier-like|webhook automation|automation pipeline|execute automation)/i.test(prompt);
+    },
+    shouldBinaryAnalyze(prompt) {
+      const p = String(prompt || '').toLowerCase();
+      const hasBinary = !!(window.BinaryInspector && BinaryInspector.selectedFile);
+      if (!hasBinary) return false;
+      return /(analy[sz]e|inspect|reverse|binary|malware|strings|imports|what('?s| is) in (this|the) (binary|apk|exe|dmg|file)|security)/i.test(prompt) || (/(binary|apk|exe|dmg)/i.test(p));
+    },
+
+    async performWebSearch(query) {
+      const res = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, numResults: 5 })
+      });
+      const data = await res.json().catch(() => ({}));
+      return data;
+    },
+    formatSearchResults(data) {
+      if (!data) return 'No search response.';
+      if (data.error && (!data.results || !data.results.length)) {
+        return `Search unavailable: ${data.error}`;
       }
-      const mcpTools = MCP.getAllTools();
+      const lines = [];
+      if (data.answer) lines.push(`Answer: ${data.answer}`);
+      const results = Array.isArray(data.results) ? data.results : [];
+      if (!results.length) lines.push('No web results found.');
+      results.slice(0, 6).forEach((r, i) => {
+        lines.push(`\n[${i + 1}] ${r.title || '(untitled)'}`);
+        if (r.url) lines.push(`Source: ${r.url}`);
+        if (r.content) lines.push(String(r.content).slice(0, 500));
+      });
+      if (data.error && results.length) lines.push(`\n(note: ${data.error})`);
+      return lines.join('\n').trim();
+    },
+
+    async runPrompt(prompt, opts = {}) {
+      const useRagEl = document.getElementById('agentUseRag');
+      const autoApplyEl = document.getElementById('agentAutoApply');
+      const useRag = opts.useRag ?? (useRagEl ? useRagEl.checked : true);
+      const autoApply = autoApplyEl ? autoApplyEl.checked : true;
+      const toolNotes = [];
+      let extraContext = '';
+      let ragMeta = '';
+
+      // Autonomous tool routing
+      const wantsSearch = this.shouldSearch(prompt);
+      if (wantsSearch) {
+        const pill = this.addStatusPill('🔍 Searching web...', 'running');
+        try {
+          const data = await this.performWebSearch(prompt);
+          const formatted = this.formatSearchResults(data);
+          const ok = Array.isArray(data.results) && data.results.length > 0;
+          extraContext += `\n\n--- Web Search Results (/api/search) ---\n${formatted}`;
+          toolNotes.push(ok ? `Web search: ${data.results.length} result(s)` : (data.error ? `Web search: ${data.error}` : 'Web search: no results'));
+          this.updateStatusPill(pill, ok ? `🔍 Searched web (${data.results.length} sources)` : `🔍 Web search: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
+        } catch (e) {
+          toolNotes.push(`Web search failed: ${e.message}`);
+          this.updateStatusPill(pill, `🔍 Web search failed: ${e.message}`, 'error');
+        }
+      }
+
+      let contextBlock = this.collectWorkspaceSummary();
+
+      if (this.shouldBinaryAnalyze(prompt)) {
+        const pill = this.addStatusPill('🧪 Analyzing binary...', 'running');
+        try {
+          const text = await BinaryInspector.analyze();
+          extraContext += `\n\n--- Binary Inspection Output ---\n${String(text || '').slice(0, 12000)}`;
+          toolNotes.push(`Binary analysis: ${BinaryInspector.selectedFile ? BinaryInspector.selectedFile.name : 'completed'}`);
+          this.updateStatusPill(pill, `🧪 Binary analyzed${BinaryInspector.selectedFile ? ': ' + BinaryInspector.selectedFile.name : ''}`, 'done');
+          if (window.App && App.setView) App.setView('workspace');
+        } catch (e) {
+          toolNotes.push(`Binary analysis failed: ${e.message}`);
+          this.updateStatusPill(pill, `🧪 Binary analysis failed: ${e.message}`, 'error');
+        }
+      }
+
+      // autonomous n8n trigger (if clearly requested/automation intent and configured)
+      if (this.shouldN8n(prompt)) {
+        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+        const r = await this.triggerN8n(prompt, { from: 'agent-autonomous', prompt }, { source: 'agent-autonomous', showErrors: false });
+        if (r.ok) {
+          toolNotes.push('n8n workflow triggered');
+          extraContext += `\n\n--- n8n Automation ---\nTriggered configured n8n webhook successfully (HTTP ${r.result?.httpStatus ?? 'ok'}). Response: ${this.formatN8nBody(r.result?.body).slice(0, 2000)}`;
+          this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
+        } else {
+          toolNotes.push(`n8n not triggered: ${r.error}`);
+          extraContext += `\n\n--- n8n Automation ---\nNot triggered/configured: ${r.error}`;
+          this.updateStatusPill(pill, `⚡ n8n not triggered (${r.error || 'unavailable'})`, r.error === 'not_configured' ? 'warn' : 'error');
+        }
+      }
+
+      // MCP hint: agent decides via prompt context; we expose tools (and note availability)
+      const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
       if (mcpTools.length) {
         contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');
       }
-      const payload = `${prompt}\n\n=== WORKSPACE CONTEXT ===\n${contextBlock}`;
-      const answer = await this.callWithRotation(payload);
-      const actions = this.parseAgentActions(answer);
-      let execSummary = [];
-      if (autoApply && actions.edits.length && window.Editor) {
-        const applied = Editor.applyEdits(actions.edits);
-        execSummary.push(`Applied ${applied.length} edit(s)`);
+
+      if (useRag && window.RAG) {
+        try {
+          const rag = await RAG.buildContext(prompt, AppState.settings.ragK);
+          if (rag && rag.text) { contextBlock += `\n\n--- Retrieved RAG Context ---\n${rag.text}`; ragMeta = `${rag.results.length} snippets`; }
+        } catch (e) { ragMeta = `RAG error: ${e.message}`; }
       }
+
+      contextBlock += extraContext;
+      const payload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+
+      const pill = this.addStatusPill('✨ Thinking...', 'running');
+      let answer;
+      try {
+        answer = await this.callWithRotation(payload);
+        this.updateStatusPill(pill, '✨ Response ready', 'done');
+      } catch (e) {
+        this.updateStatusPill(pill, '✨ Request failed', 'error');
+        throw e;
+      }
+
+      const actions = this.parseAgentActions(answer);
+      const execSummary = [];
+
+      if (autoApply && actions.edits.length && window.Editor) {
+        this._lastAutoAction = 'edit';
+        const editPill = this.addStatusPill(`📝 Applying edits to ${actions.edits.map(e=>e.path).filter(Boolean).slice(0,2).join(', ') || 'files'}...`, 'running');
+        const applied = Editor.applyEdits(actions.edits);
+        execSummary.push(`Applied ${applied.length} edit(s): ${applied.map(a=>a.path).join(', ')}`);
+        this.updateStatusPill(editPill, `📝 Edited ${applied.length} file(s)`, 'done');
+        // auto-open editor on agent changes
+        if (applied.length && window.App && App.setView) App.setView('editor');
+        setTimeout(() => { this._lastAutoAction = null; }, 500);
+      }
+
       if (actions.terminal && actions.terminal.length && window.TerminalPanel) {
         for (const t of actions.terminal) {
           if (t?.command) {
@@ -313,12 +457,42 @@
           }
         }
       }
+
+      // Execute MCP tool calls requested by agent (structured actions)
+      if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
+        for (const call of actions.mcp) {
+          const server = call.server || call.serverName;
+          const tool = call.tool || call.name || call.toolName;
+          const args = call.arguments || call.args || {};
+          if (!server || !tool) continue;
+          const pill = this.addStatusPill(`🔌 Calling MCP ${server}:${tool}...`, 'running');
+          try {
+            const result = await MCP.callTool(server, tool, args);
+            execSummary.push(`MCP ${server}:${tool} executed`);
+            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
+          } catch (e) {
+            execSummary.push(`MCP ${server}:${tool} failed: ${e.message}`);
+            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
+          }
+        }
+      }
+
+      // Execute n8n action requested by agent (structured action)
+      if (actions.n8n) {
+        const msg = (typeof actions.n8n === 'string') ? actions.n8n : (actions.n8n.message || actions.n8n.prompt || prompt);
+        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+        const r = await this.triggerN8n(msg, typeof actions.n8n === 'object' ? actions.n8n : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
+        if (r.ok) { execSummary.push('n8n workflow triggered (agent action)'); this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done'); }
+        else { execSummary.push(`n8n action failed: ${r.error}`); this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error'); }
+      }
+
       let suffix = '';
       if (actions.notes) suffix += `\n[Agent notes] ${actions.notes}`;
       if (execSummary.length) suffix += `\n[Execution] ${execSummary.join('; ')}`;
+      if (toolNotes.length) suffix += `\n[Tools] ${toolNotes.join(' | ')}`;
       if (ragMeta) suffix += `\n[RAG] ${ragMeta}`;
       this.addMessage('assistant', answer + (suffix ? `\n\n${suffix}` : ''), 'chat');
-      return { text: answer, actions, execution: execSummary };
+      return { text: answer, actions, execution: execSummary, tools: toolNotes };
     }
   };
   window.Agent = Agent;

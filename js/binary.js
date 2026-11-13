@@ -23,59 +23,68 @@
     },
     async analyze() {
       const out = document.getElementById('binaryOutput');
-      if (!this.selectedFile) { Utils.toast('Select a binary/package first', 'error'); return; }
+      if (!this.selectedFile) { Utils.toast('Select a binary/package first', 'error'); return null; }
       const file = this.selectedFile;
-      out.textContent = `Analyzing ${file.name}...\n`;
+      if (out) out.textContent = `Analyzing ${file.name}...\n`;
       try {
-        const buf = await file.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const lines = [];
-        lines.push(`Name: ${file.name}`);
-        lines.push(`Size: ${Utils.formatBytes(file.size)} (${file.size} bytes)`);
-        lines.push(`MIME: ${file.type || 'unknown'}`);
-        lines.push(`SHA-like fingerprint: ${Utils.hashString([...bytes.slice(0, 4096)].join(','))}-${file.size}`);
-        const sig = this.detectSignature(bytes);
-        lines.push(`Detected signature: ${sig.type}${sig.detail ? ' - ' + sig.detail : ''}`);
-        lines.push('');
-
-        let peInfo = null;
-        if (sig.type === 'ZIP/APK/JAR/IPA' || /\.apk$|\.zip$|\.ipa$/i.test(file.name)) {
-          lines.push(await this.inspectZip(buf, file.name));
-        } else if (sig.type === 'PE/EXE/DLL' || /\.exe$/i.test(file.name)) {
-          peInfo = this.inspectPe(bytes);
-          if (peInfo.sectionFlags && peInfo.sectionFlags.length) {
-            lines.push('\n--- PE Section Size Flags ---');
-            for (const f of peInfo.sectionFlags) {
-              lines.push(`⚠ ${f.name}: raw=${f.rawSize} bytes (${f.pct.toFixed(1)}% of file) — likely contains embedded archive, installer, or packed payload`);
-            }
-            lines.push('');
-          }
-          lines.push(peInfo.text);
-        } else if (sig.type === 'DMG/UDIF' || /\.dmg$/i.test(file.name)) {
-          lines.push(this.inspectDmg(bytes, buf));
-        } else {
-          lines.push('No container-specific parser matched; performing generic inspection.');
-        }
-
-        // Extract strings with stricter defaults and render categorized interesting findings
-        const extracted = this.extractStrings(bytes, 7, 1200);
-        const findings = this.categorizeFindings(extracted.strings);
-        lines.push('\n=== Interesting Findings ===');
-        lines.push(this.renderFindings(findings));
-        if (extracted.filteredNoise) {
-          lines.push(`(Filtered ${extracted.filteredNoise} noisy/repetitive strings such as repeated-byte patterns and short register-like fragments.)`);
-        }
-
-        lines.push('\n--- Extracted Strings (sample, >= 7 chars, noise filtered) ---');
-        lines.push(extracted.strings.slice(0, 300).join('\n') || '(none found)');
-        lines.push('\n--- Hex Preview (first 256 bytes) ---');
-        lines.push(this.hexPreview(bytes, 256));
-        out.textContent = lines.join('\n');
+        const text = await this.analyzeToText(file);
+        if (out) out.textContent = text;
         Utils.toast('Binary analysis complete', 'success');
+        return text;
       } catch (e) {
-        out.textContent += `\nAnalysis failed: ${e.message}\n${e.stack || ''}`;
+        const msg = `Analysis failed: ${e.message}\n${e.stack || ''}`;
+        if (out) out.textContent += `\n${msg}`;
         Utils.toast(`Binary analysis failed: ${e.message}`, 'error');
+        throw e;
       }
+    },
+
+    async analyzeToText(file) {
+      const target = file || this.selectedFile;
+      if (!target) throw new Error('No binary file selected');
+      const buf = await target.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const lines = [];
+      lines.push(`Name: ${target.name}`);
+      lines.push(`Size: ${Utils.formatBytes(target.size)} (${target.size} bytes)`);
+      lines.push(`MIME: ${target.type || 'unknown'}`);
+      lines.push(`SHA-like fingerprint: ${Utils.hashString([...bytes.slice(0, 4096)].join(','))}-${target.size}`);
+      const sig = this.detectSignature(bytes);
+      lines.push(`Detected signature: ${sig.type}${sig.detail ? ' - ' + sig.detail : ''}`);
+      lines.push('');
+
+      let peInfo = null;
+      if (sig.type === 'ZIP/APK/JAR/IPA' || /\.apk$|\.zip$|\.ipa$/i.test(target.name)) {
+        lines.push(await this.inspectZip(buf, target.name));
+      } else if (sig.type === 'PE/EXE/DLL' || /\.exe$/i.test(target.name)) {
+        peInfo = this.inspectPe(bytes);
+        if (peInfo.sectionFlags && peInfo.sectionFlags.length) {
+          lines.push('\n--- PE Section Size Flags ---');
+          for (const f of peInfo.sectionFlags) {
+            lines.push(`⚠ ${f.name}: raw=${f.rawSize} bytes (${f.pct.toFixed(1)}% of file) — likely contains embedded archive, installer, or packed payload`);
+          }
+          lines.push('');
+        }
+        lines.push(peInfo.text);
+      } else if (sig.type === 'DMG/UDIF' || /\.dmg$/i.test(target.name)) {
+        lines.push(this.inspectDmg(bytes, buf));
+      } else {
+        lines.push('No container-specific parser matched; performing generic inspection.');
+      }
+
+      const extracted = this.extractStrings(bytes, 7, 1200);
+      const findings = this.categorizeFindings(extracted.strings);
+      lines.push('\n=== Interesting Findings ===');
+      lines.push(this.renderFindings(findings));
+      if (extracted.filteredNoise) {
+        lines.push(`(Filtered ${extracted.filteredNoise} noisy/repetitive strings such as repeated-byte patterns and short register-like fragments.)`);
+      }
+
+      lines.push('\n--- Extracted Strings (sample, >= 7 chars, noise filtered) ---');
+      lines.push(extracted.strings.slice(0, 300).join('\n') || '(none found)');
+      lines.push('\n--- Hex Preview (first 256 bytes) ---');
+      lines.push(this.hexPreview(bytes, 256));
+      return lines.join('\n');
     },
     detectSignature(bytes) {
       const s4 = String.fromCharCode(...bytes.slice(0, 4));

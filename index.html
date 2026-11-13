@@ -37,61 +37,50 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="h-full bg-base text-slate-200 overflow-hidden antialiased">
-  <div id="app" class="h-[100dvh] min-h-0 overflow-hidden flex flex-col bg-base">
+  <div id="app" class="h-[100dvh] min-h-0 overflow-hidden flex flex-col bg-base agent-first" data-view="agent">
     <!-- Top Header -->
     <header class="h-[42px] shrink-0 border-b border-border bg-panel2/95 backdrop-blur flex items-center justify-between px-3 gap-2 z-30">
       <div class="flex items-center gap-2 min-w-0 shrink-0">
-        <div class="flex items-center gap-2 pr-2">
-          <span class="inline-flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-br from-accent2 to-accent text-white text-xs font-bold shadow-glow">Ap</span>
-          <div class="leading-tight">
-            <div class="text-sm font-semibold text-white tracking-tight">Apex IDE</div>
-          </div>
+        <span class="inline-flex items-center justify-center w-7 h-7 rounded-md bg-gradient-to-br from-accent2 to-accent text-white text-xs font-bold shadow-glow">A</span>
+        <div class="leading-tight min-w-0">
+          <div class="text-sm font-semibold text-white tracking-tight">Apex</div>
+          <div class="text-[10px] text-slate-500 hidden sm:block truncate">Autonomous agent workspace</div>
         </div>
       </div>
-      <div class="flex-1 flex items-center justify-center min-w-0 px-2">
-        <div class="status-pill-center">
-          <span class="status-dot"></span>
-          <span class="text-[10px] uppercase tracking-wider text-slate-500 hidden sm:inline">Workspace</span>
-          <span id="workspaceLabel" class="truncate max-w-[10rem] sm:max-w-[18rem] text-slate-200" title="Active workspace">No folder opened</span>
+      <div class="flex-1 flex items-center justify-center min-w-0 px-1">
+        <div class="flex items-center gap-1 bg-panel/70 border border-border rounded-full p-0.5 shadow-sm">
+          <button id="btnPanelAgent" class="header-btn !h-7 !px-2.5 !rounded-full active" data-pane-target="right" title="Agent chat">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
+            <span>Agent</span>
+          </button>
+          <button id="btnPanelExplorer" class="header-btn !h-7 !px-2.5 !rounded-full" data-pane-target="left" title="Workspace, files & binary inspector">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span class="hidden sm:inline">Workspace</span>
+          </button>
+          <button id="btnToggleTerminal" class="header-btn !h-7 !px-2.5 !rounded-full" data-pane-target="center" title="Editor & terminal">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+            <span class="hidden sm:inline">Editor</span>
+          </button>
         </div>
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
-        <button id="btnPanelExplorer" class="header-btn" data-pane-target="left" title="Toggle Explorer panel">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-          <span class="hidden xl:inline">Explorer</span>
-        </button>
-        <button id="btnToggleTerminal" class="header-btn" title="Toggle terminal drawer">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="m7 9 3 3-3 3M12 15h4"/></svg>
-          <span class="hidden xl:inline">Terminal</span>
-        </button>
-        <button id="btnPanelAgent" class="header-btn" data-pane-target="right" title="Toggle Agent panel">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
-          <span class="hidden xl:inline">Agent</span>
-        </button>
-        <button id="btnOpenSettings" class="header-btn" title="Open integrations and runtime settings">
+        <span id="workspaceLabel" class="hidden lg:inline truncate max-w-[10rem] text-[11px] text-slate-400" title="Active workspace">No folder opened</span>
+        <button id="btnOpenSettings" class="header-btn" title="Settings">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.1a1 1 0 0 0-.9.6Z"/></svg>
+          <span class="hidden sm:inline">Settings</span>
         </button>
-        <button id="btnRunAgent" class="header-btn header-btn-primary" title="Run agent with current chat prompt">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-          <span class="hidden sm:inline">Run</span>
-        </button>
+        <button id="btnRunAgent" class="hidden" title="Run agent" aria-hidden="true"></button>
       </div>
     </header>
-
-    <!-- Mobile workspace label -->
-    <div class="md:hidden px-3 py-1.5 border-b border-border bg-panel flex items-center gap-2 shrink-0">
-      <span class="status-dot"></span>
-      <span class="text-[10px] uppercase tracking-wider text-slate-500">Workspace</span>
-      <span class="text-xs text-slate-300 truncate" id="workspaceLabelMirror">No folder opened</span>
-    </div>
+    <span id="workspaceLabelMirror" class="hidden">No folder opened</span>
 
     <!-- Main Layout -->
     <div id="workspaceShell" class="flex-1 min-h-0 overflow-hidden relative">
-      <!-- Left Panel -->
+      <!-- Left Panel: Workspace / Explorer / Binary -->
       <aside id="leftPanel" class="pane pane-left border-r border-border bg-panel flex flex-col min-h-0">
         <div class="pane-header">
-          <span class="pane-title">Explorer</span>
-          <span class="text-[10px] text-slate-500">Project & sources</span>
+          <span class="pane-title">Workspace</span>
+          <span class="text-[10px] text-slate-500">Files, GitHub & binary</span>
         </div>
         <div class="panel-tabs tab-strip pill-tabs">
           <button data-left-tab="explorer" class="left-tab tab-btn active bg-gray-800">
@@ -128,7 +117,7 @@
                 <button id="btnNewFile" class="btn-secondary">New File</button>
                 <button id="btnDeleteFile" class="btn-secondary btn-danger-text">Delete Selected</button>
               </div>
-              <p class="text-[11px] text-slate-500 leading-relaxed">Uses the browser Directory Picker when available. Falls back to an in-memory workspace otherwise.</p>
+              <p class="text-[11px] text-slate-500 leading-relaxed">Use the Directory Picker when available, or work in-memory. Agent can create/edit files automatically.</p>
             </div>
             <div class="flex-1 min-h-0 flex flex-col">
               <div class="section-label mb-1.5">File tree</div>
@@ -140,7 +129,7 @@
             <div class="card-surface p-3 space-y-3">
               <div>
                 <div class="text-xs font-medium text-slate-300">Clone GitHub repository</div>
-                <p class="text-[11px] text-slate-500 mt-0.5">Import public repository structure and text files into the workspace.</p>
+                <p class="text-[11px] text-slate-500 mt-0.5">Import public repository files into the workspace.</p>
               </div>
               <div class="space-y-1.5">
                 <label class="field-label" for="githubRepoInput">Repository</label>
@@ -148,13 +137,13 @@
               </div>
               <div class="space-y-1.5">
                 <label class="field-label" for="githubBranchInput">Branch <span class="text-slate-600">(optional)</span></label>
-                <input id="githubBranchInput" class="input" placeholder="Defaults to repository default branch" />
+                <input id="githubBranchInput" class="input" placeholder="Default branch" />
               </div>
               <button id="btnCloneRepo" class="btn-primary w-full">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
                 Fetch Repository
               </button>
-              <div id="githubStatus" class="status-note">Ready to fetch. Rate limits may apply without a token.</div>
+              <div id="githubStatus" class="status-note">Ready to fetch.</div>
             </div>
           </div>
 
@@ -162,12 +151,12 @@
             <div class="card-surface p-3 space-y-3">
               <div>
                 <div class="text-xs font-medium text-slate-300">Binary & package inspector</div>
-                <p class="text-[11px] text-slate-500 mt-0.5">Inspect signatures, manifests, strings, and metadata for supported binaries.</p>
+                <p class="text-[11px] text-slate-500 mt-0.5">Drop a binary and ask the agent to analyze it, or inspect manually.</p>
               </div>
               <div id="binaryDropZone" class="drop-zone">
                 <svg class="w-8 h-8 text-slate-500 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M20 16.5v1a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-1"/></svg>
                 <div class="text-sm text-slate-300 font-medium">Drop binary or package here</div>
-                <div class="text-[11px] text-slate-500 mt-1">.apk, .exe, .dmg, .zip, .ipa — or click to browse</div>
+                <div class="text-[11px] text-slate-500 mt-1">.apk, .exe, .dmg, .zip, .ipa</div>
                 <input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dmg,.zip,.ipa" />
               </div>
               <div class="grid grid-cols-2 gap-2">
@@ -183,9 +172,8 @@
         </div>
       </aside>
 
-      <!-- Center Panel -->
+      <!-- Center Panel: Editor & Terminal -->
       <main id="centerPane" class="pane pane-center min-w-0 flex flex-col bg-base min-h-0 overflow-hidden">
-        <!-- Editor top bar -->
         <div id="editorTopBar" class="shrink-0 border-b border-border bg-panel2/80 px-2 py-1.5 flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 min-w-0">
             <div class="editor-tab-pill min-w-0">
@@ -195,7 +183,6 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span class="text-[11px] text-slate-500 hidden sm:inline">Language</span>
             <span id="languageBadge" class="badge badge-muted hidden sm:inline">plaintext</span>
             <label class="sr-only" for="languageSelect">Language</label>
             <select id="languageSelect" class="input input-compact w-auto min-w-[8rem]">
@@ -214,7 +201,6 @@
         </div>
 
         <div id="centerWorkspace" class="flex-1 min-h-0 flex flex-col">
-          <!-- Editor View -->
           <div id="editorView" class="flex-1 min-h-0 flex flex-col">
             <div id="editorContainer" class="flex-1 min-h-0 relative">
               <div class="editor-wrap h-full flex">
@@ -225,8 +211,6 @@
                 </div>
               </div>
             </div>
-
-            <!-- Terminal Drawer -->
             <div id="terminalPane" class="h-60 min-h-[10rem] border-t border-border bg-[#05070b] flex flex-col hidden">
               <div class="flex items-center justify-between px-2.5 py-1.5 text-xs bg-panel2 border-b border-border gap-2">
                 <div class="flex items-center gap-2 min-w-0">
@@ -246,281 +230,203 @@
         </div>
       </main>
 
-      <!-- Right Panel -->
+      <!-- Right Panel: Agent-first -->
       <aside id="rightPanel" class="pane pane-right border-l border-border bg-panel flex flex-col min-h-0">
-        <div class="pane-header">
-          <span class="pane-title">Agent & Artifact Command Panel</span>
-          <span class="text-[10px] text-slate-500">Mission timeline</span>
+        <div class="pane-header md:hidden">
+          <span class="pane-title">Agent</span>
+          <span class="text-[10px] text-slate-500">Autonomous workspace</span>
         </div>
-        <div class="panel-tabs tab-strip tab-strip-4 pill-tabs">
-          <button data-right-tab="agent" class="right-tab tab-btn active bg-gray-800">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
-            <span>Agent</span>
-          </button>
-          <button data-right-tab="mcp" class="right-tab tab-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 7h10v10H7z"/><path d="M4 12h3m10 0h3M12 4v3m0 10v3"/></svg>
-            <span>MCP</span>
-          </button>
-          <button data-right-tab="rag" class="right-tab tab-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M8 7h8M8 11h6"/></svg>
-            <span>RAG</span>
-          </button>
-          <button data-right-tab="vault" class="right-tab tab-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3"/></svg>
-            <span>Vault</span>
-          </button>
+        <div class="hidden" aria-hidden="true">
+          <button data-right-tab="agent" class="right-tab tab-btn active bg-gray-800"><span>Agent</span></button>
+          <button data-right-tab="mcp" class="right-tab tab-btn"><span>MCP</span></button>
+          <button data-right-tab="rag" class="right-tab tab-btn"><span>RAG</span></button>
+          <button data-right-tab="vault" class="right-tab tab-btn"><span>Vault</span></button>
         </div>
         <div class="flex-1 min-h-0 overflow-hidden">
-          <!-- Agent Tab -->
           <div id="tab-agent" class="right-tab-panel h-full flex flex-col min-h-0">
-            <div class="px-3 pt-3 pb-2 border-b border-border space-y-2 text-xs shrink-0 bg-panel2/20">
-              <div class="card-surface p-2.5 space-y-2">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="text-[11px] font-medium text-slate-300 uppercase tracking-wider">Model / Endpoint</div>
-                  <span id="agentKeyStatus" class="badge badge-success">Apex Managed AI Active (or add custom keys below to override)</span>
-                </div>
-                <div class="grid grid-cols-1 gap-2">
-                  <div class="grid grid-cols-2 gap-2">
-                    <div class="space-y-1">
-                      <label class="field-label" for="agentProvider">Provider</label>
-                      <select id="agentProvider" class="input input-compact">
-                        <option value="openai-compatible">OpenAI-compatible</option>
-                        <option value="anthropic">Anthropic-compatible</option>
-                        <option value="custom">Custom Endpoint</option>
-                      </select>
-                    </div>
-                    <div class="space-y-1">
-                      <label class="field-label" for="agentModel">Model</label>
-                      <input id="agentModel" class="input input-compact" placeholder="Default (Server Model)" />
-                    </div>
-                  </div>
-                  <details class="text-[11px]">
-                    <summary class="cursor-pointer text-slate-400 hover:text-slate-200">Endpoint & keys</summary>
-                    <div class="mt-2 space-y-2">
-                      <div class="space-y-1">
-                        <label class="field-label" for="agentEndpoint">API endpoint override <span class="text-slate-600">(optional)</span></label>
-                        <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="/api/chat (managed) or custom endpoint" />
-                      </div>
-                      <div class="space-y-1">
-                        <label class="field-label" for="apiKeysInput">API keys <span class="text-slate-600">(one per line, auto-rotated)</span></label>
-                        <textarea id="apiKeysInput" rows="2" class="input font-mono text-[11px]" placeholder="Optional BYOK override — sk-...\nsk-..."></textarea>
-                      </div>
-                    </div>
-                  </details>
-                  <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
-                    <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentUseRag" type="checkbox" checked class="accent-accent" /> Use RAG context</label>
-                    <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentAutoApply" type="checkbox" checked class="accent-accent" /> Auto-apply edits</label>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll p-3 space-y-3 text-sm"></div>
-            <div class="p-3 border-t border-border bg-panel2/20 shrink-0 sticky bottom-0 z-10 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-3">
-              <div class="agent-composer">
+            <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll px-3 sm:px-6 py-4 space-y-3 text-sm"></div>
+            <div id="agentComposerWrap" class="border-t border-border bg-panel2/30 shrink-0 sticky bottom-0 z-10 px-3 sm:px-6 py-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-4">
+              <div class="agent-composer max-w-3xl mx-auto w-full">
                 <label class="sr-only" for="chatInput">Agent instruction</label>
                 <div class="relative">
-                  <textarea id="chatInput" rows="3" class="input w-full pr-12" enterkeyhint="send" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Enter to send, Shift+Enter for newline)"></textarea>
-                  <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="absolute right-2 bottom-2 inline-flex items-center justify-center w-8 h-8 rounded-md bg-accent2 hover:bg-accent text-white shadow-glow transition-colors" title="Send (Enter)" aria-label="Send message">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                  <textarea id="chatInput" rows="1" class="input w-full pr-12 min-h-[3rem] max-h-48 resize-none" enterkeyhint="send" placeholder="Ask anything… I can search, edit code, analyze binaries, or run automations. (Enter to send, Shift+Enter for newline)"></textarea>
+                  <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="absolute right-2 bottom-2 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-accent2 hover:bg-accent text-white shadow-glow transition-colors" title="Send (Enter)" aria-label="Send message">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="w-4 h-4" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
                   </button>
                 </div>
-                <div class="agent-composer-actions">
-                  <div class="flex items-center gap-2">
-                    <button id="btnIndexWorkspace" class="btn-secondary btn-xs" title="Index workspace files for RAG">Index Workspace</button>
-                    <button id="btnTriggerN8n" class="btn-secondary btn-xs" title="Trigger configured n8n-local-instance webhook with current message">Trigger n8n</button>
-                  </div>
-                  <button id="agent-send-btn" type="submit" class="btn-primary" title="Send to Agent">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
-                    <span>Send</span>
-                  </button>
+                <div class="hidden" aria-hidden="true">
+                  <button id="agent-send-btn" type="submit">Send</button>
+                  <button id="btnIndexWorkspace" type="button">Index Workspace</button>
+                  <button id="btnTriggerN8n" type="button">Trigger n8n</button>
                 </div>
+              </div>
+              <div class="max-w-3xl mx-auto mt-1.5 flex items-center justify-between text-[10px] text-slate-500 px-1">
+                <span id="agentKeyStatus" class="badge badge-success !text-[10px] !px-2 !py-0.5">Apex Managed AI Active</span>
+                <button type="button" class="hover:text-slate-300" onclick="document.getElementById('btnOpenSettings')?.click()">Settings</button>
               </div>
             </div>
           </div>
-
-          <!-- MCP Tab -->
-          <div id="tab-mcp" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
-            <div class="card-surface p-3 space-y-2">
-              <div class="flex items-center justify-between">
-                <div class="text-xs font-medium text-slate-300">MCP Server Registry</div>
-                <span class="badge badge-muted">JSON-RPC / WebSocket</span>
-              </div>
-              <label class="field-label" for="mcpConfigInput">Server configuration (JSON array)</label>
-              <textarea id="mcpConfigInput" rows="8" class="input font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
-              <div class="flex gap-2">
-                <button id="btnMcpConnect" class="btn-primary flex-1">Connect / Refresh</button>
-                <button id="btnMcpDiscover" class="btn-secondary">Discover Tools</button>
-              </div>
-              <p class="text-[11px] text-slate-500">Connects to local/remote MCP endpoints and exposes discovered tools to the agent context.</p>
-            </div>
-            <div class="flex-1 min-h-0 flex flex-col">
-              <div class="section-label mb-1.5">Connected servers & tools</div>
-              <pre id="mcpStatus" class="flex-1 min-h-[12rem] overflow-auto custom-scroll bg-base border border-border rounded-lg p-3 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono"></pre>
-            </div>
-          </div>
-
-          <!-- RAG Tab -->
-          <div id="tab-rag" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
-            <div class="card-surface p-3 space-y-2.5">
-              <div class="flex items-center justify-between gap-2">
-                <div class="text-xs font-medium text-slate-300">Local Context Indexer</div>
-                <span class="badge badge-muted">IndexedDB RAG</span>
-              </div>
-              <div id="ragStats" class="badge badge-info inline-flex">Chunks: 0 | Files: 0</div>
-              <div class="flex gap-2">
-                <button id="btnRagReindex" class="btn-primary flex-1">Reindex Workspace</button>
-                <button id="btnRagClear" class="btn-secondary">Clear Index</button>
-              </div>
-              <div class="space-y-1">
-                <label class="field-label" for="ragQueryInput">Search indexed snippets</label>
-                <div class="flex gap-2">
-                  <input id="ragQueryInput" class="input flex-1" placeholder="Search code, symbols, or concepts..." />
-                  <button id="btnRagSearch" class="btn-secondary">Search</button>
-                </div>
-              </div>
-            </div>
-            <div class="flex-1 min-h-0 flex flex-col">
-              <div class="section-label mb-1.5">Search results</div>
-              <pre id="ragResults" class="flex-1 min-h-[12rem] overflow-auto custom-scroll bg-base border border-border rounded-lg p-3 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono"></pre>
-            </div>
-          </div>
-
-          <!-- Vault Tab -->
-          <div id="tab-vault" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
-            <div class="card-surface p-3 space-y-2.5">
-              <div class="flex items-center justify-between gap-2 flex-wrap">
-                <div class="text-xs font-medium text-slate-300">n8n Local Instance</div>
-                <span id="n8nStatusBadge" class="badge badge-muted">Idle</span>
-              </div>
-              <p class="text-[11px] text-slate-500">Connect to your local n8n instance (<code class="text-slate-400">http://localhost:5678</code>, health: <code class="text-slate-400">/healthz</code>). Triggers POST to webhook URLs like <code class="text-slate-400">/webhook/&lt;path&gt;</code> with JSON body accessible in n8n as <code class="text-slate-400">$json.body.*</code>.</p>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div class="sm:col-span-2 space-y-1">
-                  <label class="field-label" for="n8nWebhookUrl">Webhook / API URL</label>
-                  <input id="n8nWebhookUrl" class="input font-mono text-[11px]" placeholder="http://localhost:5678/webhook/your-path" />
-                </div>
-                <div class="space-y-1">
-                  <label class="field-label" for="n8nAuthHeader">Auth header name <span class="text-slate-600">(optional)</span></label>
-                  <input id="n8nAuthHeader" class="input font-mono text-[11px]" placeholder="x-api-key or Authorization" />
-                </div>
-                <div class="space-y-1">
-                  <label class="field-label" for="n8nAuthToken">Auth header value / token <span class="text-slate-600">(optional)</span></label>
-                  <input id="n8nAuthToken" type="password" class="input font-mono text-[11px]" placeholder="your-api-key or Bearer token" />
-                </div>
-                <div class="sm:col-span-2 space-y-1">
-                  <label class="field-label" for="n8nTestPayload">Test message / payload (JSON or text)</label>
-                  <textarea id="n8nTestPayload" rows="3" class="input font-mono text-[11px]" placeholder='{"message":"Hello from Apex IDE","session_id":"session_001"}'></textarea>
-                </div>
-              </div>
-              <div class="flex gap-2 flex-wrap">
-                <button id="btnN8nSaveConfig" class="btn-primary">Save n8n Config</button>
-                <button id="btnN8nHealth" class="btn-secondary">Check Health</button>
-                <button id="btnN8nTrigger" class="btn-secondary">Trigger Workflow</button>
-              </div>
-              <div class="space-y-1">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="section-label">Live trigger status</span>
-                  <span id="n8nHttpStatus" class="badge badge-muted">HTTP —</span>
-                </div>
-                <pre id="n8nExecutionOutput" class="min-h-[7rem] max-h-48 overflow-auto custom-scroll bg-base border border-border rounded-lg p-2.5 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono">No n8n trigger activity yet.</pre>
-              </div>
-            </div>
-
-            <div class="card-surface p-3 space-y-2.5">
-              <div class="flex items-center justify-between">
-                <div class="text-xs font-medium text-slate-300">App Integration & Credential Hub</div>
-                <span class="badge badge-muted">Local vault</span>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div class="sm:col-span-2 space-y-1">
-                  <label class="field-label" for="vaultName">Integration name</label>
-                  <input id="vaultName" class="input" placeholder="e.g. n8n-local-instance, GitHub, Slack" />
-                </div>
-                <div class="space-y-1">
-                  <label class="field-label" for="vaultType">Credential type</label>
-                  <input id="vaultType" class="input" placeholder="api_key / oauth / webhook / n8n" />
-                </div>
-                <div class="space-y-1">
-                  <label class="field-label" for="vaultUrl">Base URL / webhook URL</label>
-                  <input id="vaultUrl" class="input font-mono text-[11px]" placeholder="https://..." />
-                </div>
-                <div class="sm:col-span-2 space-y-1">
-                  <label class="field-label" for="vaultSecret">Token / secret / JSON config</label>
-                  <textarea id="vaultSecret" rows="3" class="input font-mono text-[11px]" placeholder="Token, secret, or JSON configuration"></textarea>
-                </div>
-              </div>
-              <div class="flex gap-2 flex-wrap">
-                <button id="btnVaultSave" class="btn-primary flex-1">Save Credential</button>
-                <button id="btnVaultExport" class="btn-secondary">Export</button>
-                <button id="btnVaultImport" class="btn-secondary">Import</button>
-              </div>
-              <p class="text-[11px] text-slate-500">Stored in browser local storage for agent/automation use. Avoid committing exported secrets.</p>
-            </div>
-            <div class="flex-1 min-h-0 flex flex-col">
-              <div class="section-label mb-1.5">Stored credentials</div>
-              <div id="vaultList" class="flex-1 min-h-[10rem] overflow-auto custom-scroll border border-border rounded-lg bg-base/60 p-2.5 space-y-2"></div>
-            </div>
-          </div>
+          <div id="tab-mcp" class="right-tab-panel hidden h-full" aria-hidden="true"></div>
+          <div id="tab-rag" class="right-tab-panel hidden h-full" aria-hidden="true"></div>
+          <div id="tab-vault" class="right-tab-panel hidden h-full" aria-hidden="true"></div>
         </div>
       </aside>
     </div>
 
     <!-- Mobile Bottom Nav -->
     <nav id="mobileNav" class="shrink-0 border-t border-border bg-panel2/95 backdrop-blur gap-1 z-30">
-      <button class="mobile-pane-btn active" data-pane-target="left" title="Explorer">
+      <button class="mobile-pane-btn active" data-pane-target="right" title="Agent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
+        <span>Agent</span>
+      </button>
+      <button class="mobile-pane-btn" data-pane-target="left" title="Workspace">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-        <span>Explorer</span>
+        <span>Workspace</span>
       </button>
       <button class="mobile-pane-btn" data-pane-target="center" title="Editor">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
         <span>Editor</span>
       </button>
-      <button class="mobile-pane-btn" data-pane-target="right" title="Agent">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
-        <span>Agent</span>
-      </button>
     </nav>
 
-    <!-- Settings Modal -->
-    <div id="settingsModal" class="hidden fixed inset-0 bg-black/70 z-50 items-center justify-center p-4">
-      <div class="w-full max-w-4xl bg-panel border border-border rounded-xl shadow-2xl max-h-[88vh] overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-panel2/60">
+    <!-- Settings Modal (slide-over on mobile) -->
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/70 z-50 items-center justify-end p-0 sm:p-4">
+      <div class="w-full sm:max-w-3xl h-full sm:h-auto sm:max-h-[92vh] bg-panel border-l sm:border border-border sm:rounded-xl shadow-2xl overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-panel2/60 shrink-0">
           <div>
-            <div class="font-semibold text-white">Integrations, Keys & Runtime Settings</div>
-            <div class="text-[11px] text-slate-500">Configure agent behavior, bridges, and repository access</div>
+            <div class="font-semibold text-white">Settings</div>
+            <div class="text-[11px] text-slate-500">Agent, models, tools, MCP, RAG, integrations & runtime</div>
           </div>
           <button id="btnCloseSettings" class="icon-btn" aria-label="Close settings">✕</button>
         </div>
-        <div class="p-4 overflow-auto custom-scroll grid md:grid-cols-2 gap-4 text-sm">
-          <div class="card-surface p-4 space-y-3">
-            <div class="text-sm font-medium text-slate-200">Agent runtime</div>
+        <div class="p-4 overflow-auto custom-scroll space-y-4 text-sm flex-1 min-h-0">
+          <section class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">Agent & Model</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="space-y-1">
+                <label class="field-label" for="agentProvider">Provider</label>
+                <select id="agentProvider" class="input input-compact">
+                  <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="anthropic">Anthropic-compatible</option>
+                  <option value="custom">Custom Endpoint</option>
+                </select>
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="agentModel">Model <span class="text-slate-500">(blank = server default)</span></label>
+                <input id="agentModel" class="input input-compact" placeholder="Default (Server Model)" />
+              </div>
+              <div class="sm:col-span-2 space-y-1">
+                <label class="field-label" for="agentEndpoint">API endpoint override <span class="text-slate-600">(optional)</span></label>
+                <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="/api/chat (managed) or custom endpoint" />
+              </div>
+              <div class="sm:col-span-2 space-y-1">
+                <label class="field-label" for="apiKeysInput">Custom API keys / BYOK <span class="text-slate-600">(one per line, optional)</span></label>
+                <textarea id="apiKeysInput" rows="3" class="input font-mono text-[11px]" placeholder="Optional — sk-..."></textarea>
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-4 text-[11px] text-slate-300">
+              <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentUseRag" type="checkbox" checked class="accent-accent" /> Use RAG context automatically</label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentAutoApply" type="checkbox" checked class="accent-accent" /> Auto-apply code edits</label>
+            </div>
+          </section>
+
+          <section class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">System Prompt & RAG</div>
             <div class="space-y-1">
               <label class="field-label" for="settingSystemPrompt">Default system prompt</label>
-              <textarea id="settingSystemPrompt" rows="10" class="input text-xs font-mono"></textarea>
+              <textarea id="settingSystemPrompt" rows="8" class="input text-xs font-mono"></textarea>
             </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              <div class="space-y-1">
+                <label class="field-label" for="settingRagK">Max RAG snippets</label>
+                <input id="settingRagK" type="number" min="1" max="20" value="6" class="input" />
+              </div>
+              <div class="flex gap-2">
+                <button id="btnRagReindex" class="btn-secondary flex-1">Index Workspace</button>
+                <button id="btnRagClear" class="btn-secondary">Clear</button>
+              </div>
+            </div>
+            <div id="ragStats" class="badge badge-info inline-flex">Chunks: 0 | Files: 0</div>
             <div class="space-y-1">
-              <label class="field-label" for="settingRagK">Max RAG snippets</label>
-              <input id="settingRagK" type="number" min="1" max="20" value="6" class="input" />
+              <label class="field-label" for="ragQueryInput">Search indexed snippets</label>
+              <div class="flex gap-2">
+                <input id="ragQueryInput" class="input flex-1" placeholder="Search snippets..." />
+                <button id="btnRagSearch" class="btn-secondary">Search</button>
+              </div>
+              <pre id="ragResults" class="mt-2 max-h-40 overflow-auto custom-scroll bg-base border border-border rounded-lg p-2 text-[11px] whitespace-pre-wrap text-slate-300 font-mono"></pre>
             </div>
-          </div>
-          <div class="card-surface p-4 space-y-3">
-            <div class="text-sm font-medium text-slate-200">Execution bridges & access</div>
-            <div class="space-y-1">
-              <label class="field-label" for="settingTerminalWs">Terminal bridge WebSocket URL</label>
-              <input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal" />
+          </section>
+
+          <section class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">MCP Servers</div>
+            <label class="field-label" for="mcpConfigInput">Server configuration (JSON array)</label>
+            <textarea id="mcpConfigInput" rows="6" class="input font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
+            <div class="flex gap-2">
+              <button id="btnMcpConnect" class="btn-primary flex-1">Connect / Refresh</button>
+              <button id="btnMcpDiscover" class="btn-secondary">Discover Tools</button>
             </div>
-            <div class="space-y-1">
-              <label class="field-label" for="settingWebhookUrl">External webhook / automation URL <span class="text-slate-600">(optional)</span></label>
-              <input id="settingWebhookUrl" class="input font-mono text-xs" placeholder="https://example.com/webhook" />
+            <pre id="mcpStatus" class="max-h-40 overflow-auto custom-scroll bg-base border border-border rounded-lg p-2 text-[11px] whitespace-pre-wrap text-slate-300 font-mono"></pre>
+          </section>
+
+          <section class="card-surface p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+              <div class="text-sm font-medium text-slate-200">n8n Integration</div>
+              <span id="n8nStatusBadge" class="badge badge-muted">Idle</span>
             </div>
-            <div class="space-y-1">
-              <label class="field-label" for="settingGithubToken">GitHub token <span class="text-slate-600">(optional)</span></label>
-              <input id="settingGithubToken" type="password" class="input font-mono text-xs" placeholder="ghp_..." />
+            <p class="text-[11px] text-slate-500">Configure webhook for autonomous workflow triggers (agent decides when to use it).</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div class="sm:col-span-2 space-y-1">
+                <label class="field-label" for="n8nWebhookUrl">Webhook URL</label>
+                <input id="n8nWebhookUrl" class="input font-mono text-[11px]" placeholder="http://localhost:5678/webhook/your-path" />
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="n8nAuthHeader">Auth header name</label>
+                <input id="n8nAuthHeader" class="input font-mono text-[11px]" placeholder="x-api-key or Authorization" />
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="n8nAuthToken">Auth header value / token</label>
+                <input id="n8nAuthToken" type="password" class="input font-mono text-[11px]" placeholder="token" />
+              </div>
+              <div class="sm:col-span-2 space-y-1">
+                <label class="field-label" for="n8nTestPayload">Test payload (JSON or text)</label>
+                <textarea id="n8nTestPayload" rows="2" class="input font-mono text-[11px]" placeholder='{"message":"Hello"}'></textarea>
+              </div>
             </div>
+            <div class="flex gap-2 flex-wrap">
+              <button id="btnN8nSaveConfig" class="btn-primary">Save n8n Config</button>
+              <button id="btnN8nHealth" class="btn-secondary">Check Health</button>
+              <button id="btnN8nTrigger" class="btn-secondary">Test Trigger</button>
+            </div>
+            <div class="flex items-center justify-between gap-2"><span class="section-label">Execution status</span><span id="n8nHttpStatus" class="badge badge-muted">HTTP —</span></div>
+            <pre id="n8nExecutionOutput" class="min-h-[4rem] max-h-32 overflow-auto custom-scroll bg-base border border-border rounded-lg p-2 text-[11px] whitespace-pre-wrap text-slate-300 font-mono">No n8n trigger activity yet.</pre>
+          </section>
+
+          <section class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">Credential Vault</div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div class="sm:col-span-2 space-y-1"><label class="field-label" for="vaultName">Integration name</label><input id="vaultName" class="input" placeholder="e.g. GitHub, Slack" /></div>
+              <div class="space-y-1"><label class="field-label" for="vaultType">Credential type</label><input id="vaultType" class="input" placeholder="api_key / oauth / webhook" /></div>
+              <div class="space-y-1"><label class="field-label" for="vaultUrl">Base URL / webhook URL</label><input id="vaultUrl" class="input font-mono text-[11px]" placeholder="https://..." /></div>
+              <div class="sm:col-span-2 space-y-1"><label class="field-label" for="vaultSecret">Token / secret / JSON config</label><textarea id="vaultSecret" rows="2" class="input font-mono text-[11px]" placeholder="Secret"></textarea></div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+              <button id="btnVaultSave" class="btn-primary flex-1">Save Credential</button>
+              <button id="btnVaultExport" class="btn-secondary">Export</button>
+              <button id="btnVaultImport" class="btn-secondary">Import</button>
+            </div>
+            <div id="vaultList" class="max-h-40 overflow-auto custom-scroll border border-border rounded-lg bg-base/60 p-2 space-y-2"></div>
+          </section>
+
+          <section class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">Runtime & Bridges</div>
+            <div class="space-y-1"><label class="field-label" for="settingTerminalWs">Terminal bridge WebSocket URL</label><input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal" /></div>
+            <div class="space-y-1"><label class="field-label" for="settingWebhookUrl">External webhook / automation URL <span class="text-slate-600">(optional)</span></label><input id="settingWebhookUrl" class="input font-mono text-xs" placeholder="https://example.com/webhook" /></div>
+            <div class="space-y-1"><label class="field-label" for="settingGithubToken">GitHub token <span class="text-slate-600">(optional)</span></label><input id="settingGithubToken" type="password" class="input font-mono text-xs" placeholder="ghp_..." /></div>
             <p class="text-[11px] text-slate-500">Settings persist in local browser storage on this device.</p>
-          </div>
+          </section>
         </div>
-        <div class="px-4 py-3 border-t border-border flex justify-end gap-2 bg-panel2/40">
-          <button id="btnCloseSettingsSecondary" class="btn-secondary">Cancel</button>
+        <div class="px-4 py-3 border-t border-border flex justify-end gap-2 bg-panel2/40 shrink-0">
+          <button id="btnCloseSettingsSecondary" class="btn-secondary">Close</button>
           <button id="btnSaveSettings" class="btn-primary">Save Settings</button>
         </div>
       </div>
