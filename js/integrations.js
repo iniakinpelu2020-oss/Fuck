@@ -307,10 +307,25 @@
           if (!reqObj.source) reqObj.source = 'apex-ide';
           if (!reqObj.timestamp) reqObj.timestamp = new Date().toISOString();
           const reqBody = typeof options.payload === 'string' ? options.payload : JSON.stringify(reqObj);
-          this.notify({ status: 'sending', httpStatus: null, url, event, request: { method: options.method || 'POST', headers: { ...headers, ...(headers[headerName] ? { [headerName]: '[redacted]' } : {}), ...(headers.Authorization ? { Authorization: '[redacted]' } : {}) }, payload: reqObj }, body: `Sending ${options.method || 'POST'} ${url} ...`, at: new Date().toISOString() });
+
+          // 10s timeout so webhook triggers (incl. trigger_n8n_webhook tool) never hang
+          const timeoutMs = Number(options.timeoutMs || 10000);
+          const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          let timedOut = false;
+          const timer = controller ? setTimeout(() => { timedOut = true; try { controller.abort(); } catch {} }, timeoutMs) : null;
+          const fetchOptions = { method: options.method || 'POST', headers, body: reqBody };
+          if (controller) fetchOptions.signal = controller.signal;
+          if (options.signal && controller) {
+            // if caller provided a signal, abort our controller when it aborts
+            try { options.signal.addEventListener('abort', () => { try { controller.abort(); } catch {} }, { once: true }); } catch {}
+          } else if (options.signal && !controller) {
+            fetchOptions.signal = options.signal;
+          }
+
+          this.notify({ status: 'sending', httpStatus: null, url, event: reqObj.event, request: { method: fetchOptions.method, headers: { ...headers, ...(headers[headerName] ? { [headerName]: '[redacted]' } : {}), ...(headers.Authorization ? { Authorization: '[redacted]' } : {}) }, payload: reqObj }, body: `Sending ${fetchOptions.method} ${url} ...`, at: new Date().toISOString() });
 
           try {
-            const res = await fetch(url, { method: options.method || 'POST', headers, body: reqBody });
+            const res = await fetch(url, fetchOptions);
             const text = await res.text().catch(() => '');
             let body;
             try { body = text ? JSON.parse(text) : (text || null); } catch { body = text; }
@@ -329,9 +344,18 @@
             if (!res.ok) throw new Error(`n8n webhook responded with HTTP ${res.status}`);
             return result;
           } catch (e) {
-            const errState = { status: 'error', httpStatus: e.httpStatus || null, url, event, body: `Trigger failed: ${e.message}`, error: e.message, at: new Date().toISOString() };
-            if (!String(e.message || '').startsWith('n8n webhook responded with HTTP')) this.notify(errState);
-            throw e;
+            let errMsg = e && e.message ? e.message : String(e);
+            if ((e && e.name === 'AbortError') || timedOut) {
+              errMsg = `n8n webhook timed out after ${timeoutMs}ms`;
+            }
+            const errState = { status: 'error', httpStatus: e && e.httpStatus ? e.httpStatus : null, url, event: reqObj.event, body: `Trigger failed: ${errMsg}`, error: errMsg, at: new Date().toISOString(), timedOut: !!timedOut };
+            this.notify(errState);
+            const outErr = new Error(errMsg);
+            outErr.httpStatus = errState.httpStatus;
+            outErr.timedOut = !!timedOut;
+            throw outErr;
+          } finally {
+            if (timer) clearTimeout(timer);
           }
         },
         async checkHealth() { return Integrations.checkN8nHealth(); }

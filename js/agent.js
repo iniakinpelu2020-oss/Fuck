@@ -494,6 +494,28 @@
       return { server, tool, args };
     },
 
+    _stableStringify(value) {
+      if (value === null || typeof value !== 'object') return JSON.stringify(value);
+      if (Array.isArray(value)) return '[' + value.map(v => this._stableStringify(v)).join(',') + ']';
+      const keys = Object.keys(value).sort();
+      return '{' + keys.map(k => JSON.stringify(k) + ':' + this._stableStringify(value[k])).join(',') + '}';
+    },
+
+    _mcpCallKey(server, tool, args) {
+      const s = String(server || '').toLowerCase();
+      let t = String(tool || '');
+      let normServer = s;
+      let normTool = t;
+      if ((s === 'builtin' || s === 'agent' || s === 'apex') && t === 'trigger_n8n_webhook') {
+        normServer = 'builtin';
+        normTool = 'trigger_n8n_webhook';
+      }
+      let a = args;
+      if (a == null || typeof a !== 'object' || Array.isArray(a)) a = {};
+      try { return `${normServer}:${normTool}:${this._stableStringify(a)}`; }
+      catch { try { return `${normServer}:${normTool}:${JSON.stringify(a)}`; } catch { return `${normServer}:${normTool}`; } }
+    },
+
     async executeMcpCall(call, opts = {}) {
       const resolved = this.resolveMcpCall(call);
       if (!resolved) return { ok: false, skipped: true, error: 'Invalid MCP tool call' };
@@ -501,20 +523,20 @@
       // Built-in agent tool: trigger_n8n_webhook
       if ((server === 'builtin' || server === 'agent' || server === 'apex') && tool === 'trigger_n8n_webhook') {
         const label = `builtin:${tool}`;
-        const pill = this.addStatusPill(`⚡ trigger_n8n_webhook...`, 'running');
+        const pill = this.addStatusPill(`⚡ Running n8n workflow...`, 'running');
         try {
           const event = (args && (args.event || args.name || args.type)) || 'manual';
           const payload = (args && Object.prototype.hasOwnProperty.call(args, 'payload')) ? args.payload : (args || {});
           const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
           if (!bridge || typeof bridge.trigger !== 'function') throw new Error('n8n webhook bridge unavailable');
-          const result = await bridge.trigger(event, payload, { source: 'apex-ide' });
+          const result = await bridge.trigger(event, payload, { source: 'apex-ide', timeoutMs: 10000 });
           const resultText = this.formatN8nBody(result?.body ?? result);
           const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
-          this.updateStatusPill(pill, `⚡ trigger_n8n_webhook completed`, 'done');
+          this.updateStatusPill(pill, `⚡ n8n workflow triggered`, 'done');
           return { ok: true, server: 'builtin', tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
-          this.updateStatusPill(pill, `⚡ trigger_n8n_webhook failed`, 'error');
+          this.updateStatusPill(pill, `⚡ n8n workflow failed${msg ? ': ' + msg : ''}`, 'error');
           return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
         }
       }
@@ -653,13 +675,33 @@
         try {
           const data = await this.performWebSearch(prompt);
           const formatted = this.formatSearchResults(data);
-          const ok = Array.isArray(data.results) && data.results.length > 0;
+          const results = Array.isArray(data.results) ? data.results : [];
+          const ok = results.length > 0;
+          const errStr = String((data && (data.error || data.searxngError || data.message)) || '');
+          const searxngUnavailable = /searxng/i.test(errStr) && (/502|503|504|bad gateway|unavailable|timed out|timeout|failed|error/i.test(errStr) || /\b5\d\d\b/.test(errStr));
           extraContext += `\n\n--- Web Search Results (/api/search) ---\n${formatted}`;
-          toolNotes.push(ok ? `Web search: ${data.results.length} result(s)` : (data.error ? `Web search: ${data.error}` : 'Web search: no results'));
-          this.updateStatusPill(pill, ok ? `🔍 Searched web (${data.results.length} sources)` : `🔍 Web search: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
+          if (ok) {
+            toolNotes.push(`Web search: ${results.length} result(s)`);
+            this.updateStatusPill(pill, `🔍 Searched web (${results.length} sources)`, 'done');
+          } else if (searxngUnavailable) {
+            // SearXNG unavailable (e.g. 502) - degrade gracefully without warning pill
+            this.updateStatusPill(pill, '🔍 Web search unavailable', 'done');
+          } else if (errStr) {
+            toolNotes.push(`Web search: ${errStr}`);
+            this.updateStatusPill(pill, `🔍 Web search: ${errStr}`, 'warn');
+          } else {
+            toolNotes.push('Web search: no results');
+            this.updateStatusPill(pill, '🔍 Web search: no results', 'done');
+          }
         } catch (e) {
-          toolNotes.push(`Web search failed: ${e.message}`);
-          this.updateStatusPill(pill, `🔍 Web search failed: ${e.message}`, 'error');
+          const errStr = String(e && e.message || e || '');
+          const searxngUnavailable = /searxng/i.test(errStr) && (/502|503|504|unavailable|timed out|timeout|failed|error/i.test(errStr) || /\b5\d\d\b/.test(errStr));
+          if (searxngUnavailable) {
+            this.updateStatusPill(pill, '🔍 Web search unavailable', 'done');
+          } else {
+            toolNotes.push(`Web search failed: ${errStr}`);
+            this.updateStatusPill(pill, `🔍 Web search failed: ${errStr}`, 'error');
+          }
         }
       }
 
@@ -743,6 +785,7 @@
       const execSummary = [];
       const cmdResults = [];
       let applied = [];
+      const seenToolCalls = new Set();
 
       // Workspace & Editor: apply edits, auto-open editor, RAG auto-indexes via state events
       if (autoApply && actions.edits.length && window.Editor) {
@@ -763,6 +806,12 @@
           const cmdStr = String(t.command).trim();
           const mcpRoute = this.tryParseMcpTerminalCommand(cmdStr);
           if (mcpRoute && window.MCP && MCP.callTool) {
+            const resolvedRoute = this.resolveMcpCall(mcpRoute);
+            const routeKey = resolvedRoute ? this._mcpCallKey(resolvedRoute.server, resolvedRoute.tool, resolvedRoute.args) : null;
+            if (routeKey && seenToolCalls.has(routeKey)) {
+              continue; // deduplicate identical tool call within same assistant turn
+            }
+            if (routeKey) seenToolCalls.add(routeKey);
             if (window.TerminalPanel) { TerminalPanel.ensureShown && TerminalPanel.ensureShown(); TerminalPanel.write(`$ ${cmdStr}`); }
             const res = await this.executeMcpCall(mcpRoute, { cmd: cmdStr });
             cmdResults.push({ cmd: cmdStr, ...res, remote: false });
@@ -803,6 +852,12 @@
       if (Array.isArray(actions.tool_calls)) mcpCalls.push(...actions.tool_calls);
       if (mcpCalls.length) {
         for (const call of mcpCalls) {
+          const resolvedCall = this.resolveMcpCall(call);
+          if (resolvedCall) {
+            const callKey = this._mcpCallKey(resolvedCall.server, resolvedCall.tool, resolvedCall.args);
+            if (seenToolCalls.has(callKey)) continue; // deduplicate identical tool call within same assistant turn
+            seenToolCalls.add(callKey);
+          }
           const res = await this.executeMcpCall(call);
           if (res.skipped) continue;
           cmdResults.push(res);
