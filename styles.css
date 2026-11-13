@@ -257,6 +257,7 @@ header { height: 42px !important; min-height: 42px; }
   .mobile-pane-btn svg { width: 16px; height: 16px; }
   .mobile-pane-btn.active { color: #fff; background: rgba(59,130,246,0.14); border-color: rgba(59,130,246,0.28); }
   #toastContainer { bottom: 56px !important; }
+  #tab-agent > .shrink-0.sticky.bottom-0 { padding-bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px)) !important; }
   header { flex-wrap: nowrap !important; overflow-x: auto !important; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   header::-webkit-scrollbar { display: none; }
   header > * { flex: 0 0 auto; }

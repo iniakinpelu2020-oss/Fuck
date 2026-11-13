@@ -315,10 +315,15 @@
               </div>
             </div>
             <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll p-3 space-y-3 text-sm"></div>
-            <div class="p-3 border-t border-border bg-panel2/20 shrink-0 sticky bottom-0 z-10">
+            <div class="p-3 border-t border-border bg-panel2/20 shrink-0 sticky bottom-0 z-10 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-3">
               <div class="agent-composer">
                 <label class="sr-only" for="chatInput">Agent instruction</label>
-                <textarea id="chatInput" rows="3" class="input" enterkeyhint="send" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Enter to send, Shift+Enter for newline)"></textarea>
+                <div class="relative">
+                  <textarea id="chatInput" rows="3" class="input w-full pr-12" enterkeyhint="send" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Enter to send, Shift+Enter for newline)"></textarea>
+                  <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="absolute right-2 bottom-2 inline-flex items-center justify-center w-8 h-8 rounded-md bg-accent2 hover:bg-accent text-white shadow-glow transition-colors" title="Send (Enter)" aria-label="Send message">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                  </button>
+                </div>
                 <div class="agent-composer-actions">
                   <div class="flex items-center gap-2">
                     <button id="btnIndexWorkspace" class="btn-secondary btn-xs" title="Index workspace files for RAG">Index Workspace</button>

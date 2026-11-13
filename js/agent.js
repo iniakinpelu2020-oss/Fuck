@@ -1,8 +1,11 @@
 (function () {
   const Agent = {
     init() {
-      const sendBtn = document.getElementById('agent-send-btn') || document.getElementById('btnSendChat');
-      if (sendBtn) sendBtn.addEventListener('click', () => this.sendFromUI());
+      document.querySelectorAll('#agent-send-btn, #agent-send-btn-inline, #btnSendChat, [data-agent-send]').forEach((btn) => {
+        if (btn.dataset.sendBound) return;
+        btn.dataset.sendBound = '1';
+        btn.addEventListener('click', () => this.sendFromUI());
+      });
       document.getElementById('btnRunAgent').addEventListener('click', () => this.sendFromUI());
       const btnN8n = document.getElementById('btnTriggerN8n');
       if (btnN8n) btnN8n.addEventListener('click', () => this.triggerN8nFromUI());
