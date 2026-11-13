@@ -73,22 +73,63 @@
 
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
 
-    renderMessageContent(content) {
-      const text = String(content ?? '');
-      const parts = text.split(/(```(?:json:edits|json)[\s\S]*?```)/gi);
-      return parts.map(part => {
-        const m = part.match(/^```((?:json:edits|json))\s*([\s\S]*?)```$/i);
-        if (m) {
-          const lang = m[1].toLowerCase();
-          const body = m[2].replace(/\n$/, '');
-          const label = lang === 'json:edits' ? 'json:edits' : 'json';
-          return `<details class="json-edits-card" ${lang === 'json:edits' ? 'open' : ''}><summary class="json-edits-summary"><span class="json-edits-dot"></span>${this.escapeHtml(label)}</summary><pre class="json-edits"><code>${this.escapeHtml(body)}</code></pre></details>`;
+    stripActionBlocks(text) {
+      let s = String(text ?? '');
+      // Remove json:edits fences and json fences that contain tool/action payloads
+      s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
+      s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
+        const obj = Utils.safeJsonParse(body, null);
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
+        // collapse other JSON blocks to a compact details element
+        const trimmed = String(body || '').trim();
+        if (!trimmed) return '';
+        return `<details class="json-edits-card"><summary class="json-edits-summary"><span class="json-edits-dot"></span>json</summary><pre class="json-edits"><code>${this.escapeHtml(trimmed)}</code></pre></details>`;
+      });
+      // Clean excessive blank lines left by stripping
+      s = s.replace(/\n{3,}/g, '\n\n').trim();
+      return s;
+    },
+
+    streamDisplayText(text) {
+      let s = String(text ?? '');
+      // strip complete action blocks
+      s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
+      s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
+        const obj = Utils.safeJsonParse(body, null);
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
+        return m; // keep non-action json visible (will render on finalize)
+      });
+      // hide incomplete trailing action fence during streaming so raw JSON doesn't flash
+      const fenceRe = /```(?:json:edits|json)\b/gi;
+      let m, last = -1;
+      while ((m = fenceRe.exec(s)) !== null) last = m.index;
+      if (last >= 0) {
+        const tail = s.slice(last);
+        if (!/```\s*$/.test(tail.replace(/```(?:json:edits|json)\b/i, ''))) {
+          // no closing fence yet for this action block start -> hide from start of trailing fence
+          s = s.slice(0, last);
         }
+      }
+      return s.replace(/\n{3,}/g, '\n\n');
+    },
+
+    renderMessageContent(content, opts = {}) {
+      const stripped = (opts.raw === true) ? String(content ?? '') : this.stripActionBlocks(content);
+      // stripActionBlocks may return HTML for collapsed non-action json blocks; handle mixed content safely
+      const parts = String(stripped).split(/(<details class="json-edits-card">[\s\S]*?<\/details>)/gi);
+      return parts.map(part => {
+        if (/^<details class="json-edits-card">/i.test(part)) return part;
         return `<span>${this.escapeHtml(part)}</span>`;
       }).join('');
     },
 
-    addMessage(role, content, meta = '') {
+    renderBadges(badges) {
+      const arr = (badges || []).filter(Boolean);
+      if (!arr.length) return '';
+      return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(b)}</span>`).join('')}</div>`;
+    },
+
+    addMessage(role, content, meta = '', badges = []) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
       const div = document.createElement('div');
@@ -96,7 +137,7 @@
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>`;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       return div;
@@ -127,10 +168,11 @@
       const div = document.createElement('div');
       div.className = 'chat-msg assistant streaming';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      div.innerHTML = `<div class="meta"><span class="msg-avatar msg-avatar-agent">A</span><span>Agent</span>${metaHtml}</div><pre class="chat-content"><span class="thinking-inline"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="thinking-label">Thinking...</span></span></pre>`;
+      div.innerHTML = `<div class="meta"><span class="msg-avatar msg-avatar-agent">A</span><span>Agent</span>${metaHtml}</div><pre class="chat-content"><span class="thinking-inline"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="thinking-label">Thinking...</span></span></pre><div class="chat-badges"></div>`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       const contentEl = div.querySelector('.chat-content');
+      const badgesEl = div.querySelector('.chat-badges');
       let text = '';
       let started = false;
       return {
@@ -139,7 +181,7 @@
           if (!delta) return;
           if (!started) { started = true; contentEl.textContent = ''; }
           text += delta;
-          contentEl.textContent = text;
+          contentEl.textContent = Agent.streamDisplayText(text);
           wrap.scrollTop = wrap.scrollHeight;
         },
         setError(msg) {
@@ -149,9 +191,10 @@
           wrap.scrollTop = wrap.scrollHeight;
         },
         getText() { return text; },
-        finalize(suffix = '') {
-          const full = text + (suffix || '');
+        finalize(displayText = null, badges = []) {
+          const full = (displayText != null ? String(displayText) : text);
           contentEl.innerHTML = Agent.renderMessageContent(full);
+          if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badges);
           div.classList.remove('streaming');
           wrap.scrollTop = wrap.scrollHeight;
           return full;
@@ -450,7 +493,34 @@
       return lines.join('\n').trim();
     },
 
+    buildActionBadges(execSummary = [], toolNotes = [], applied = [], cmdResults = [], extras = []) {
+      const badges = [];
+      // tool/search/automation notes
+      for (const n of (toolNotes || [])) {
+        const s = String(n || '');
+        if (/^Web search:s*d+/i.test(s)) badges.push(`✓ Searched web`);
+        else if (/^Web search:/i.test(s)) badges.push(`✓ Web search`);
+        else if (/n8n workflow triggered/i.test(s)) badges.push(`✓ n8n workflow`);
+        else if (/Binary analysis/i.test(s)) badges.push(`✓ Binary analyzed`);
+      }
+      for (const a of (applied || [])) {
+        badges.push(`${a.created ? '✓ Created' : '✓ Updated'} ${a.path}`);
+      }
+      for (const r of (cmdResults || [])) {
+        if (!r || !r.cmd) continue;
+        const short = r.cmd.length > 42 ? r.cmd.slice(0, 39) + '…' : r.cmd;
+        if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
+        else if (r.remote) badges.push(`✓ Ran remotely: ${short}`);
+        else badges.push(`✓ Ran: ${short}`);
+      }
+      for (const e of (extras || [])) { if (e) badges.push(e); }
+      // de-dupe preserving order
+      const seen = new Set();
+      return badges.filter(b => { const k = b.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
+    },
+
     async runPrompt(prompt, opts = {}) {
+      const streamBubble = opts.streamBubble || this.createStreamingAssistantBubble('chat');
       const useRagEl = document.getElementById('agentUseRag');
       const autoApplyEl = document.getElementById('agentAutoApply');
       const useRag = opts.useRag ?? (useRagEl ? useRagEl.checked : true);
@@ -459,7 +529,7 @@
       let extraContext = '';
       let ragMeta = '';
 
-      // Autonomous tool routing
+      // 1) Unified autonomous tool routing (pre-LLM): web search, binary context, n8n, MCP, RAG
       const wantsSearch = this.shouldSearch(prompt);
       if (wantsSearch) {
         const pill = this.addStatusPill('🔍 Searching web...', 'running');
@@ -478,27 +548,37 @@
 
       let contextBlock = this.collectWorkspaceSummary();
 
-      if (this.shouldBinaryAnalyze(prompt)) {
-        const pill = this.addStatusPill('🧪 Analyzing binary...', 'running');
-        try {
-          const text = await BinaryInspector.analyze();
-          extraContext += `\n\n--- Binary Inspection Output ---\n${String(text || '').slice(0, 12000)}`;
-          toolNotes.push(`Binary analysis: ${BinaryInspector.selectedFile ? BinaryInspector.selectedFile.name : 'completed'}`);
-          this.updateStatusPill(pill, `🧪 Binary analyzed${BinaryInspector.selectedFile ? ': ' + BinaryInspector.selectedFile.name : ''}`, 'done');
-          if (window.App && App.setView) App.setView('workspace');
-        } catch (e) {
-          toolNotes.push(`Binary analysis failed: ${e.message}`);
-          this.updateStatusPill(pill, `🧪 Binary analysis failed: ${e.message}`, 'error');
+      // Binary inspector: automatically include loaded/parsed binary analysis in agent context
+      if (window.BinaryInspector) {
+        let binText = (BinaryInspector.lastAnalysis && BinaryInspector.lastAnalysis.text) ? BinaryInspector.lastAnalysis.text : '';
+        const needsAnalyze = !binText && BinaryInspector.selectedFile && this.shouldBinaryAnalyze(prompt);
+        if (needsAnalyze) {
+          const pill = this.addStatusPill('🧪 Analyzing binary...', 'running');
+          try {
+            binText = await BinaryInspector.analyze();
+            toolNotes.push(`Binary analysis: ${BinaryInspector.selectedFile ? BinaryInspector.selectedFile.name : 'completed'}`);
+            this.updateStatusPill(pill, `🧪 Binary analyzed${BinaryInspector.selectedFile ? ': ' + BinaryInspector.selectedFile.name : ''}`, 'done');
+            if (window.App && App.setView) App.setView('workspace');
+          } catch (e) {
+            toolNotes.push(`Binary analysis failed: ${e.message}`);
+            this.updateStatusPill(pill, `🧪 Binary analysis failed: ${e.message}`, 'error');
+          }
+        } else if (binText) {
+          // already parsed/loaded - make available to agent automatically
+          toolNotes.push(`Binary context: ${(BinaryInspector.lastAnalysis && BinaryInspector.lastAnalysis.name) || (BinaryInspector.selectedFile && BinaryInspector.selectedFile.name) || 'loaded'}`);
+        }
+        if (binText) {
+          extraContext += `\n\n--- Binary Inspection Output ---\n${String(binText).slice(0, 12000)}`;
         }
       }
 
-      // autonomous n8n trigger (if clearly requested/automation intent and configured)
+      // n8n automation: auto-trigger when relevant and feed JSON response back to agent
       if (this.shouldN8n(prompt)) {
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
         const r = await this.triggerN8n(prompt, { from: 'agent-autonomous', prompt }, { source: 'agent-autonomous', showErrors: false });
         if (r.ok) {
           toolNotes.push('n8n workflow triggered');
-          extraContext += `\n\n--- n8n Automation ---\nTriggered configured n8n webhook successfully (HTTP ${r.result?.httpStatus ?? 'ok'}). Response: ${this.formatN8nBody(r.result?.body).slice(0, 2000)}`;
+          extraContext += `\n\n--- n8n Automation Result (JSON) ---\nHTTP ${r.result?.httpStatus ?? 'ok'}\n${this.formatN8nBody(r.result?.body).slice(0, 4000)}`;
           this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
         } else {
           toolNotes.push(`n8n not triggered: ${r.error}`);
@@ -507,12 +587,13 @@
         }
       }
 
-      // MCP hint: agent decides via prompt context; we expose tools (and note availability)
+      // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
       if (mcpTools.length) {
         contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');
       }
 
+      // RAG: auto-retrieved snippets
       if (useRag && window.RAG) {
         try {
           const rag = await RAG.buildContext(prompt, AppState.settings.ragK);
@@ -523,7 +604,7 @@
       contextBlock += extraContext;
       const payload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
 
-      const streamBubble = opts.streamBubble || this.createStreamingAssistantBubble('chat');
+      // 2) Stream response live (bubble already shows immediate "Thinking...")
       let answer = '';
       try {
         answer = await this.callLLM(payload, {
@@ -534,44 +615,62 @@
         if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         throw e;
       }
-      // Ensure bubble shows content if non-stream fallback returned text without deltas
       if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
       if (!answer && streamBubble) answer = streamBubble.getText();
 
+      // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n)
       const actions = this.parseAgentActions(answer || '');
       const execSummary = [];
+      const cmdResults = [];
+      let applied = [];
 
+      // Workspace & Editor: apply edits, auto-open editor, RAG auto-indexes via state events
       if (autoApply && actions.edits.length && window.Editor) {
         this._lastAutoAction = 'edit';
-        const editPill = this.addStatusPill(`📝 Applying edits to ${actions.edits.map(e=>e.path).filter(Boolean).slice(0,2).join(', ') || 'files'}...`, 'running');
-        const applied = Editor.applyEdits(actions.edits);
+        const editPill = this.addStatusPill(`📝 Applying edits...`, 'running');
+        applied = Editor.applyEdits(actions.edits) || [];
         execSummary.push(`Applied ${applied.length} edit(s): ${applied.map(a=>a.path).join(', ')}`);
         this.updateStatusPill(editPill, `📝 Edited ${applied.length} file(s)`, 'done');
-        // auto-open editor on agent changes
         if (applied.length && window.App && App.setView) App.setView('editor');
         setTimeout(() => { this._lastAutoAction = null; }, 500);
       }
 
+      // Terminal/runner: in-browser execution engine or remote bridge; capture real stdout/stderr for agent response
       if (actions.terminal && actions.terminal.length && window.TerminalPanel) {
         for (const t of actions.terminal) {
-          if (t?.command) {
-            const ok = TerminalPanel.runCommand(t.command);
-            execSummary.push(`${ok ? 'Sent' : 'Skipped'} terminal command: ${t.command}`);
+          if (!t?.command) continue;
+          const willRemote = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
+          const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${String(t.command).slice(0, 40)}` : `▶ Running: ${String(t.command).slice(0, 40)}`, 'running');
+          try {
+            const res = await TerminalPanel.executeCommand(t.command);
+            const usedRemote = (res && res.mode === 'remote') || willRemote;
+            cmdResults.push({ cmd: t.command, ...res, remote: usedRemote });
+            const ok = res && res.ok !== false;
+            const out = String((res && (res.stdout || res.output)) || '').trim();
+            const err = String((res && res.stderr) || '').trim();
+            execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${t.command}`);
+            if (out) execSummary.push(`stdout: ${out.slice(0, 800)}${out.length > 800 ? '…' : ''}`);
+            if (err) execSummary.push(`stderr: ${err.slice(0, 800)}${err.length > 800 ? '…' : ''}`);
+            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
+          } catch (e) {
+            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) ? 'remote' : 'browser' });
+            execSummary.push(`Command error: ${t.command} — ${e.message}`);
+            this.updateStatusPill(pill, `✗ Command error`, 'error');
           }
         }
       }
 
-      // Execute MCP tool calls requested by agent (structured actions)
+      // MCP tool calls requested by agent
       if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
         for (const call of actions.mcp) {
           const server = call.server || call.serverName;
           const tool = call.tool || call.name || call.toolName;
           const args = call.arguments || call.args || {};
           if (!server || !tool) continue;
-          const pill = this.addStatusPill(`🔌 Calling MCP ${server}:${tool}...`, 'running');
+          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
           try {
-            await MCP.callTool(server, tool, args);
-            execSummary.push(`MCP ${server}:${tool} executed`);
+            const result = await MCP.callTool(server, tool, args);
+            execSummary.push(`MCP ${server}:${tool} result: ${this.formatN8nBody(result).slice(0, 500)}`);
             this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
           } catch (e) {
             execSummary.push(`MCP ${server}:${tool} failed: ${e.message}`);
@@ -580,24 +679,56 @@
         }
       }
 
-      // Execute n8n action requested by agent (structured action)
+      // n8n action requested by agent
       if (actions.n8n) {
         const msg = (typeof actions.n8n === 'string') ? actions.n8n : (actions.n8n.message || actions.n8n.prompt || prompt);
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
         const r = await this.triggerN8n(msg, typeof actions.n8n === 'object' ? actions.n8n : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
-        if (r.ok) { execSummary.push('n8n workflow triggered (agent action)'); this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done'); }
-        else { execSummary.push(`n8n action failed: ${r.error}`); this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error'); }
+        if (r.ok) {
+          execSummary.push(`n8n workflow result: ${this.formatN8nBody(r.result?.body).slice(0, 500)}`);
+          this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
+        } else {
+          execSummary.push(`n8n action failed: ${r.error}`);
+          this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error');
+        }
       }
 
-      let suffix = '';
-      if (actions.notes) suffix += `\n[Agent notes] ${actions.notes}`;
-      if (execSummary.length) suffix += `\n[Execution] ${execSummary.join('; ')}`;
-      if (toolNotes.length) suffix += `\n[Tools] ${toolNotes.join(' | ')}`;
-      if (ragMeta) suffix += `\n[RAG] ${ragMeta}`;
-      const suffixBlock = suffix ? `\n\n${suffix}` : '';
-      if (streamBubble) streamBubble.finalize(suffixBlock);
-      else this.addMessage('assistant', (answer || '') + suffixBlock, 'chat');
-      return { text: answer || '', actions, execution: execSummary, tools: toolNotes };
+      // Live Preview: auto-render when web app built/updated or requested
+      const wantsPreview = /\b(run|preview|open|serve|launch|show|render|view)\b.*\b(app|site|page|project|html|preview|browser)\b/i.test(prompt)
+        || /\b(build|create|make|generate|scaffold)\b.*\b(website|web app|landing page|html|page|ui|interface|app)\b/i.test(prompt)
+        || applied.some(a => /\.html?$/i.test(a.path));
+      if (wantsPreview && window.App && App.renderPreview) {
+        const ok = App.renderPreview();
+        if (ok) execSummary.push('Opened live preview');
+      }
+
+      // 4) Finalize chat with clean prose (raw JSON action blocks stripped) + compact status badges
+      let display = this.stripActionBlocks(answer || '');
+      if (actions.notes) {
+        const notes = String(actions.notes).trim();
+        if (notes) display = (display ? display + '\n\n' : '') + notes;
+      }
+      if (cmdResults.length) {
+        const blocks = cmdResults.map(r => {
+          const head = `$ ${r.cmd}${r.remote ? '  (remote shell)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
+          const out = String(r.stdout || r.output || '').replace(/\s+$/,'');
+          const err = String(r.stderr || '').replace(/\s+$/,'');
+          let b = head;
+          if (out) b += `\n${out}`;
+          if (err) b += `\n[stderr]\n${err}`;
+          if (!out && !err) b += '\n(no output)';
+          return b;
+        }).join('\n\n');
+        display = (display ? display + '\n\n' : '') + '[Command output]\n' + blocks;
+      }
+      const extras = [];
+      if (wantsPreview && execSummary.some(e => /live preview/i.test(e))) extras.push('✓ Live preview');
+      const badges = this.buildActionBadges(execSummary, toolNotes, applied, cmdResults, extras);
+
+      if (streamBubble) streamBubble.finalize(display, badges);
+      else this.addMessage('assistant', display, 'chat', badges);
+
+      return { text: answer || '', display, actions, execution: execSummary, tools: toolNotes, applied, cmdResults };
     }
   };
   window.Agent = Agent;

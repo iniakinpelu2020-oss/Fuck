@@ -347,8 +347,18 @@ header { height: 42px !important; min-height: 42px; }
   #agentComposerWrap { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px)) !important; }
 }
 
-/* Streaming "Thinking..." pulse inside assistant bubble */
-.chat-msg.streaming .chat-content { min-height: 1.4em; }
+/* Compact status badges in chat (clean tool execution feedback) */
+.chat-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; padding: 0 2px; }
+.chat-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 10.5px; line-height: 1.4; font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #bbf7d0; background: rgba(16,185,129,0.10);
+  border: 1px solid rgba(16,185,129,0.22);
+  max-width: 100%; white-space: nowrap;
+}
+.chat-msg .chat-content { min-width: 0; }
+
 .thinking-inline { display: inline-flex; align-items: center; gap: 4px; color: #94a3b8; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; }
 .thinking-inline .dot {
   width: 6px; height: 6px; border-radius: 999px; background: #60a5fa;
