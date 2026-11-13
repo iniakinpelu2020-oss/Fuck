@@ -14,20 +14,7 @@
       RAG.init();
       MCP.init();
       Integrations.init();
-      if (window.Workspace && Workspace.init) Workspace.init();
       Agent.init();
-      this.bindFileUploads();
-
-      // Auto-connect MCP servers and discover tools on startup when enabled servers exist in saved settings
-      try {
-        const enabledMcp = (Array.isArray(AppState.mcpServers) ? AppState.mcpServers : []).filter(s => s && s.enabled !== false && s.name && s.url);
-        if (enabledMcp.length && window.MCP) {
-          Promise.resolve()
-            .then(() => (typeof MCP.connectAll === 'function' ? MCP.connectAll(enabledMcp) : null))
-            .then(() => (typeof MCP.discoverAll === 'function' ? MCP.discoverAll() : null))
-            .catch((e) => console.warn('MCP auto-connect failed', e));
-        }
-      } catch (e) { console.warn('MCP auto-connect init error', e); }
 
       if (AppState.files.size === 0) {
         AppState.workspaceName = 'Starter Workspace';
@@ -71,74 +58,6 @@
       const close = document.getElementById('btnPreviewClose');
       if (refresh) refresh.addEventListener('click', () => this.renderPreview());
       if (close) close.addEventListener('click', () => this.hidePreview());
-    },
-
-    bindFileUploads() {
-      const chatInput = document.getElementById('chatFileInput');
-      const chatBtn = document.getElementById('btnChatAttach');
-      const wsInput = document.getElementById('workspaceFileUploadInput');
-      const wsBtn = document.getElementById('btnUploadWorkspaceFiles');
-
-      if (chatBtn && chatInput) {
-        chatBtn.addEventListener('click', () => chatInput.click());
-        chatInput.addEventListener('change', async () => {
-          if (chatInput.files && chatInput.files.length) {
-            await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(chatInput.files, { attachToChat: true, source: 'chat-attach' }) : null);
-          }
-          chatInput.value = '';
-        });
-      }
-      if (wsBtn && wsInput) {
-        wsBtn.addEventListener('click', () => wsInput.click());
-        wsInput.addEventListener('change', async () => {
-          if (wsInput.files && wsInput.files.length) {
-            await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(wsInput.files, { attachToChat: false, source: 'workspace-upload' }) : null);
-          }
-          wsInput.value = '';
-        });
-      }
-
-      // Drag-and-drop support on chat area (attach to chat)
-      const dropTargets = [
-        document.getElementById('chatDropZone'),
-        document.getElementById('chatMessages'),
-        document.getElementById('agentComposerWrap')
-      ].filter(Boolean);
-      dropTargets.forEach((zone) => {
-        if (zone.dataset.dropBound) return;
-        zone.dataset.dropBound = '1';
-        let dragDepth = 0;
-        const onDragOver = (e) => {
-          if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
-          zone.classList.add('ring-1', 'ring-accent2', 'bg-accent2/5');
-        };
-        const onDragEnter = (e) => {
-          if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
-          e.preventDefault();
-          dragDepth++;
-          zone.classList.add('ring-1', 'ring-accent2', 'bg-accent2/5');
-        };
-        const onDragLeave = (e) => {
-          dragDepth = Math.max(0, dragDepth - 1);
-          if (dragDepth === 0) zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5');
-        };
-        const onDrop = async (e) => {
-          if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) {
-            dragDepth = 0; zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5'); return;
-          }
-          e.preventDefault();
-          e.stopPropagation();
-          dragDepth = 0;
-          zone.classList.remove('ring-1', 'ring-accent2', 'bg-accent2/5');
-          await (window.Workspace && Workspace.handleFiles ? Workspace.handleFiles(e.dataTransfer.files, { attachToChat: true, source: 'chat-drop' }) : null);
-        };
-        zone.addEventListener('dragenter', onDragEnter);
-        zone.addEventListener('dragover', onDragOver);
-        zone.addEventListener('dragleave', onDragLeave);
-        zone.addEventListener('drop', onDrop);
-      });
     },
     hidePreview() {
       const pane = document.getElementById('previewPane');
@@ -274,12 +193,44 @@
       if (cancel) cancel.addEventListener('click', () => this.closeSettings());
       document.getElementById('settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') this.closeSettings(); });
       document.getElementById('btnSaveSettings').addEventListener('click', () => {
-        AppState.settings.systemPrompt = document.getElementById('settingSystemPrompt').value;
+        // Agent / RAG / runtime settings
+        AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt').value || '');
         AppState.settings.ragK = Number(document.getElementById('settingRagK').value || 6);
-        AppState.settings.terminalWs = document.getElementById('settingTerminalWs').value.trim();
-        AppState.settings.webhookUrl = document.getElementById('settingWebhookUrl').value.trim();
+        const terminalUrl = (document.getElementById('settingTerminalWs').value || '').trim();
+        AppState.settings.terminalWs = terminalUrl;
+        AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl').value || '').trim();
+        AppState.settings.githubToken = (document.getElementById('settingGithubToken').value || '').trim();
         AppState.saveSettings();
-        document.getElementById('terminalWsUrl').value = AppState.settings.terminalWs || '';
+
+        // Persist MCP Servers configuration from Settings modal so Save Settings does not revert it
+        try {
+          const mcpInput = document.getElementById('mcpConfigInput');
+          if (mcpInput && window.MCP && typeof MCP.saveConfigFromUI === 'function') {
+            MCP.saveConfigFromUI();
+          } else if (mcpInput && window.Utils && Utils.safeJsonParse) {
+            const parsed = Utils.safeJsonParse(mcpInput.value, null);
+            if (Array.isArray(parsed)) {
+              AppState.mcpServers = parsed;
+              if (AppState.saveMcp) AppState.saveMcp();
+            }
+          }
+        } catch (e) {
+          // Keep other settings saved; surface MCP config issues without reverting Runner URL
+          if (window.Utils && Utils.toast) Utils.toast(`MCP config not saved: ${e.message}`, 'error');
+        }
+
+        // Keep terminal/runner UI and active state in sync with persisted URL
+        const tws = document.getElementById('terminalWsUrl');
+        if (tws) tws.value = terminalUrl;
+        if (window.TerminalPanel) {
+          TerminalPanel.remoteUrl = terminalUrl;
+          if (typeof TerminalPanel.applyRunnerConfig === 'function') {
+            TerminalPanel.applyRunnerConfig(terminalUrl, { silent: true });
+          } else if (typeof TerminalPanel.disconnect === 'function' && !terminalUrl) {
+            TerminalPanel.disconnect(true);
+          }
+        }
+
         this.closeSettings();
         Utils.toast('Settings saved', 'success');
       });
@@ -355,10 +306,31 @@
     },
 
     restoreSettingsUI() {
-      document.getElementById('settingSystemPrompt').value = AppState.settings.systemPrompt || '';
-      document.getElementById('settingRagK').value = AppState.settings.ragK || 6;
-      document.getElementById('settingTerminalWs').value = AppState.settings.terminalWs || '';
-      document.getElementById('settingWebhookUrl').value = AppState.settings.webhookUrl || '';
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+      setVal('settingSystemPrompt', s.systemPrompt || '');
+      setVal('settingRagK', s.ragK || 6);
+      setVal('settingTerminalWs', s.terminalWs || '');
+      setVal('settingWebhookUrl', s.webhookUrl || '');
+      setVal('settingGithubToken', s.githubToken || '');
+
+      // Restore MCP Servers configuration so Settings modal reflects persisted state
+      const mcpInput = document.getElementById('mcpConfigInput');
+      if (mcpInput) {
+        const servers = (window.AppState && Array.isArray(AppState.mcpServers)) ? AppState.mcpServers : [];
+        const fallback = servers.length ? servers : [{ name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }];
+        try { mcpInput.value = JSON.stringify(servers.length ? servers : fallback, null, 2); } catch { mcpInput.value = '[]'; }
+      }
+
+      // Keep header/runner input in sync
+      const tws = document.getElementById('terminalWsUrl');
+      if (tws) tws.value = s.terminalWs || '';
+      // Apply saved remote runner to active TerminalPanel so restored state is active
+      try {
+        if (window.TerminalPanel && typeof TerminalPanel.applyRunnerConfig === 'function') {
+          TerminalPanel.applyRunnerConfig(s.terminalWs || '', { silent: true });
+        }
+      } catch {}
     },
 
     openSettings() {

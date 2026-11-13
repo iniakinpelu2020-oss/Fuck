@@ -79,7 +79,7 @@
       s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
-        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n || obj.tool_calls || (obj.tool && (obj.arguments || obj.args)))) return '';
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
         // collapse other JSON blocks to a compact details element
         const trimmed = String(body || '').trim();
         if (!trimmed) return '';
@@ -96,7 +96,7 @@
       s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
-        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n || obj.tool_calls || (obj.tool && (obj.arguments || obj.args)))) return '';
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
         return m; // keep non-action json visible (will render on finalize)
       });
       // hide incomplete trailing action fence during streaming so raw JSON doesn't flash
@@ -129,32 +129,7 @@
       return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(b)}</span>`).join('')}</div>`;
     },
 
-    renderAttachments(attachments) {
-      const list = Array.isArray(attachments) ? attachments : [];
-      if (!list.length) return '';
-      const items = list.map(att => {
-        if (!att) return '';
-        const name = this.escapeHtml(att.name || 'file');
-        const size = (window.Utils && Utils.formatBytes) ? Utils.formatBytes(att.size || 0) : ((att.size || 0) + ' B');
-        const meta = this.escapeHtml(att.kind === 'zip' && Array.isArray(att.extractedPaths)
-          ? `${size} · zip · ${att.extractedPaths.length} files`
-          : `${size} · ${(att.mime || att.kind || 'file')}`);
-        if (att.kind === 'image' && att.dataUrl) {
-          return `<div class="chat-attachment inline-flex items-center gap-2 mr-2 mb-2 px-2 py-1.5 rounded-lg border border-border bg-white/5 max-w-full">
-            <img src="${att.dataUrl}" alt="${name}" class="w-10 h-10 object-cover rounded border border-border shrink-0" />
-            <div class="min-w-0"><div class="text-xs text-slate-200 truncate max-w-[12rem]" title="${name}">${name}</div><div class="text-[10px] text-slate-400">${meta}</div></div>
-          </div>`;
-        }
-        const icon = att.kind === 'zip' ? '🗜️' : att.kind === 'text' ? '📄' : att.kind === 'binary' ? '📦' : '📎';
-        return `<div class="chat-attachment inline-flex items-center gap-2 mr-2 mb-2 px-2 py-1.5 rounded-lg border border-border bg-white/5 max-w-full">
-          <div class="w-8 h-8 rounded border border-border bg-white/5 flex items-center justify-center text-sm shrink-0">${icon}</div>
-          <div class="min-w-0"><div class="text-xs text-slate-200 truncate max-w-[12rem]" title="${name}">${name}</div><div class="text-[10px] text-slate-400">${meta}</div></div>
-        </div>`;
-      }).join('');
-      return items ? `<div class="chat-attachments mt-1.5 -mb-0.5 flex flex-wrap">${items}</div>` : '';
-    },
-
-    addMessage(role, content, meta = '', badges = [], attachments = []) {
+    addMessage(role, content, meta = '', badges = []) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
       const div = document.createElement('div');
@@ -162,10 +137,7 @@
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      const text = String(content == null ? '' : content);
-      const bodyHtml = text ? `<pre class="chat-content">${this.renderMessageContent(content)}</pre>` : '';
-      const attachHtml = this.renderAttachments(attachments);
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${attachHtml}${bodyHtml}${this.renderBadges(badges)}`;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       return div;
@@ -287,34 +259,25 @@
       const input = document.getElementById('chatInput');
       if (!input) return;
       const prompt = input.value.trim();
-      const pendingAttachments = (window.Workspace && Workspace.getPending) ? Workspace.getPending() : [];
-      const hasAttachments = Array.isArray(pendingAttachments) && pendingAttachments.length > 0;
-      if (!prompt && !hasAttachments) return;
-
-      // consume attachments for this turn
-      const attachments = hasAttachments ? pendingAttachments.slice() : [];
-      if (hasAttachments && window.Workspace && Workspace.clearPending) Workspace.clearPending();
-
+      if (!prompt) return;
       // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
       if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
         input.value = ''; this.autoResizeChat();
-        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt || 'Attached files';
-        this.addMessage('user', prompt || '(attachments)', 'n8n', [], attachments);
+        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
+        this.addMessage('user', prompt);
         const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
-        const r = await this.triggerN8n(message, { from: 'agent-command', attachmentsCount: attachments.length }, { source: 'agent-chat', showErrors: true });
+        const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
         this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
         if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
         return;
       }
-
       input.value = ''; this.autoResizeChat();
-      const userText = prompt || (attachments.length ? `Attached ${attachments.length} file${attachments.length === 1 ? '' : 's'}` : '');
-      this.addMessage('user', userText, '', [], attachments);
+      this.addMessage('user', prompt);
       // Immediate animated "Thinking..." pulse inside assistant bubble
       const streamBubble = this.createStreamingAssistantBubble('chat');
       try {
-        await this.runPrompt(prompt || '', { fromUI: true, streamBubble, attachments });
+        await this.runPrompt(prompt, { fromUI: true, streamBubble });
       } catch (e) {
         if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         else this.addMessage('assistant', `Error: ${e.message}`);
@@ -338,32 +301,108 @@
       return { 'Content-Type': 'application/json', ...(key ? { 'Authorization': `Bearer ${key}` } : {}) };
     },
 
-    buildRequestBody(provider, model, system, userContent, opts = {}) {
-      // Support multimodal content for vision-capable models (OpenAI-compatible): userContent may be
-      // a string or an array of content parts like [{type:'text',text:'...'},{type:'image_url',image_url:{url:'data:...'}}]
-      if (provider === 'anthropic') {
-        let content = userContent;
-        // Anthropic expects content blocks; convert simple multimodal array if provided
-        if (Array.isArray(userContent)) {
-          content = userContent.map(part => {
-            if (!part) return null;
-            if (part.type === 'text') return { type: 'text', text: String(part.text || '') };
-            if (part.type === 'image_url' && part.image_url && part.image_url.url) {
-              const url = String(part.image_url.url);
-              const m = url.match(/^data:([^;]+);base64,(.+)$/);
-              if (m) return { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } };
-              return { type: 'text', text: `[Image: ${url}]` };
-            }
-            return { type: 'text', text: typeof part === 'string' ? part : JSON.stringify(part) };
-          }).filter(Boolean);
-        }
-        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content }] };
-        if (model) body.model = model; else body.model = 'claude-3-5-sonnet-latest';
-        return body; // Anthropic streaming protocol differs; keep non-streaming for compatibility
+    // --- LLM tool-calling (OpenAI-compatible) & MCP tool schema ---
+    getMcpToolSpecs() {
+      const specs = [];
+      if (!(window.MCP && typeof MCP.getAllTools === 'function')) return specs;
+      const tools = MCP.getAllTools() || [];
+      for (const t of tools) {
+        const server = String(t.server || '').trim();
+        const name = String(t.name || t.id || '').trim();
+        if (!server || !name) continue;
+        const prefixed = `mcp__${server}__${name}`;
+        const desc = String(t.description || `MCP tool ${name} on server ${server}`).slice(0, 500);
+        let params = t.inputSchema || t.parameters || t.input_schema || t.schema || { type: 'object', properties: {} };
+        // Ensure valid JSON schema object for OpenAI tools
+        if (!params || typeof params !== 'object' || Array.isArray(params)) params = { type: 'object', properties: {} };
+        if (!params.type) params = { ...params, type: 'object' };
+        if (params.type === 'object' && !params.properties) params = { ...params, properties: {} };
+        specs.push({
+          type: 'function',
+          function: {
+            name: prefixed,
+            description: desc,
+            parameters: params
+          },
+          _mcp: { server, tool: name }
+        });
       }
-      const body = { temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
-      if (model) body.model = model; // omit when empty so /api/chat uses server APEX_DEFAULT_MODEL
+      return specs;
+    },
+
+    getBuiltinToolSpecs() {
+      // Expose remote/local shell as a callable tool so LLM can request execution via tool_calls
+      return [{
+        type: 'function',
+        function: {
+          name: 'run_shell',
+          description: 'Execute a terminal/shell command in the configured Remote Runner (if set) or in the browser sandbox. Returns command output.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: 'Shell command to execute' }
+            },
+            required: ['command']
+          }
+        },
+        _builtin: { name: 'run_shell' }
+      }];
+    },
+
+    getLlmTools() {
+      const tools = [];
+      // Dynamic MCP tools from enabled/discovered servers
+      tools.push(...this.getMcpToolSpecs());
+      // Built-in shell tool
+      tools.push(...this.getBuiltinToolSpecs());
+      return tools;
+    },
+
+    parseMcpPrefixedToolName(name) {
+      const s = String(name || '');
+      const m = s.match(/^mcp__(.+?)__(.+)$/);
+      if (!m) return null;
+      return { server: m[1], tool: m[2] };
+    },
+
+    normalizeToolCallArgs(rawArgs) {
+      if (rawArgs == null) return {};
+      if (typeof rawArgs === 'object') return Array.isArray(rawArgs) ? { value: rawArgs } : rawArgs;
+      if (typeof rawArgs === 'string') {
+        const s = rawArgs.trim();
+        if (!s) return {};
+        const parsed = Utils.safeJsonParse(s, null);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+        if (parsed != null) return { value: parsed };
+        return { raw: s };
+      }
+      return { value: rawArgs };
+    },
+
+    buildRequestBody(provider, model, system, userContentOrMessages, opts = {}) {
+      // Accepts a plain prompt string (legacy) or a full messages array (native tool loop)
+      if (provider === 'anthropic') {
+        const content = Array.isArray(userContentOrMessages)
+          ? String((userContentOrMessages[userContentOrMessages.length - 1] || {}).content || '')
+          : String(userContentOrMessages || '');
+        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content }] };
+        body.model = model || 'claude-3-5-sonnet-latest';
+        return body; // Anthropic streaming/tool protocol differs; keep simple for compatibility
+      }
+      const messages = Array.isArray(userContentOrMessages)
+        ? userContentOrMessages
+        : [
+            { role: 'system', content: String(system || '') },
+            { role: 'user', content: String(userContentOrMessages || '') }
+          ];
+      const body = { temperature: 0.2, messages };
+      if (model) body.model = model; // omit when empty so /api/chat can apply server default
       if (opts.stream) body.stream = true;
+      if (Array.isArray(opts.tools) && opts.tools.length) {
+        // strip internal metadata before sending
+        body.tools = opts.tools.map(t => ({ type: t.type || 'function', function: t.function }));
+        if (opts.tool_choice) body.tool_choice = opts.tool_choice;
+      }
       return body;
     },
 
@@ -384,10 +423,12 @@
 
     async readSSEStream(res, onDelta) {
       const reader = res.body && res.body.getReader ? res.body.getReader() : null;
-      if (!reader) return (await res.text().catch(() => '')) || '';
+      if (!reader) return { text: (await res.text().catch(() => '')) || '', toolCalls: [] };
       const decoder = new TextDecoder();
       let buffer = '';
       let full = '';
+      const toolCallsMap = new Map(); // index -> {id,type,function:{name,arguments}}
+
       const flush = (line) => {
         const s = line.replace(/\r$/, '');
         if (!s.startsWith('data:')) return;
@@ -398,16 +439,33 @@
         let delta = '';
         const choice = obj && obj.choices && obj.choices[0];
         if (choice) {
-          const d = choice.delta;
-          if (d && typeof d.content === 'string') delta = d.content;
-          else if (d && Array.isArray(d.content)) delta = d.content.map(p => (typeof p === 'string' ? p : (p && (p.text || p.content)) || '')).join('');
+          const d = choice.delta || {};
+          // content delta
+          if (typeof d.content === 'string') delta = d.content;
+          else if (Array.isArray(d.content)) delta = d.content.map(p => (typeof p === 'string' ? p : (p && (p.text || p.content)) || '')).join('');
           else if (choice.message && typeof choice.message.content === 'string' && !full) delta = choice.message.content;
           else if (typeof choice.text === 'string') delta = choice.text;
+
+          // tool_calls delta (OpenAI streaming)
+          if (Array.isArray(d.tool_calls)) {
+            for (const tc of d.tool_calls) {
+              const idx = (tc && tc.index != null) ? Number(tc.index) : toolCallsMap.size;
+              const cur = toolCallsMap.get(idx) || { id: tc.id || `call_${idx}`, type: tc.type || 'function', function: { name: '', arguments: '' } };
+              if (tc.id) cur.id = tc.id;
+              if (tc.type) cur.type = tc.type;
+              if (tc.function) {
+                if (tc.function.name) cur.function.name = (cur.function.name || '') + tc.function.name;
+                if (tc.function.arguments) cur.function.arguments = (cur.function.arguments || '') + tc.function.arguments;
+              }
+              toolCallsMap.set(idx, cur);
+            }
+          }
         }
         if (!delta && typeof obj?.delta === 'string') delta = obj.delta;
         if (!delta && typeof obj?.content === 'string') delta = obj.content;
         if (delta) { full += delta; if (onDelta) onDelta(delta, full); }
       };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -417,10 +475,12 @@
         for (const line of lines) { if (line.trim()) flush(line); }
       }
       if (buffer.trim()) flush(buffer);
-      return full;
+
+      const toolCalls = Array.from(toolCallsMap.entries()).sort((a,b)=>a[0]-b[0]).map(([_, v]) => v).filter(tc => tc && tc.function && tc.function.name);
+      return { text: full, toolCalls };
     },
 
-    async callLLM(promptText, opts = {}) {
+    async callLLM(promptTextOrMessages, opts = {}) {
       this.persistAgentSettings();
       const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
       const model = ((document.getElementById('agentModel') || {}).value || '').trim();
@@ -432,12 +492,13 @@
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
-      const wantStream = opts.stream !== false && provider !== 'anthropic';
+      const wantStream = opts.stream !== false && provider !== 'anthropic' && !opts.disableStream;
       let lastError = null;
+
       for (let attempt = 0; attempt < total; attempt++) {
         const idx = customKeys.length ? (AppState.apiKeyIndex + attempt) % total : 0;
         const key = keys[idx];
-        const body = this.buildRequestBody(provider, model, system, promptText, { stream: wantStream });
+        const body = this.buildRequestBody(provider, model, system, promptTextOrMessages, { stream: wantStream, tools: opts.tools, tool_choice: opts.tool_choice });
         const headers = this.getHeaders(provider, key);
         try {
           const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -454,17 +515,17 @@
           if (wantStream && ct.includes('text/event-stream') && res.body) {
             if (customKeys.length) AppState.apiKeyIndex = idx;
             this.updateKeyStatus();
-            const full = await this.readSSEStream(res, opts.onDelta);
-            if (opts.onDelta && full) { /* streamed live */ }
-            return full;
+            const out = await this.readSSEStream(res, opts.onDelta);
+            return { text: out.text || '', toolCalls: out.toolCalls || [], raw: null };
           }
           // Non-streaming JSON fallback
           const data = await res.json().catch(async () => ({ raw: await res.text().catch(() => '') }));
           if (customKeys.length) AppState.apiKeyIndex = idx;
           this.updateKeyStatus();
           const text = this.extractAssistantText(provider, data);
+          const toolCalls = Array.isArray(data?.choices?.[0]?.message?.tool_calls) ? data.choices[0].message.tool_calls : [];
           if (opts.onDelta && text) opts.onDelta(text, text);
-          return text;
+          return { text: text || '', toolCalls, raw: data };
         } catch (e) {
           lastError = e;
           if (attempt === total - 1) break;
@@ -481,180 +542,18 @@
       return out;
     },
 
-    resolveMcpCall(call) {
-      if (!call || typeof call !== 'object') return null;
-      let server = call.server || call.serverName || call.mcpServer || '';
-      let tool = call.tool || call.toolName || call.name || call.tool_id || call.id || '';
-      let args = call.arguments ?? call.args ?? call.input ?? call.params ?? call.parameters ?? {};
-      if (call.function && typeof call.function === 'object') {
-        if (!tool) tool = call.function.name || call.function.tool || '';
-        const fa = call.function.arguments ?? call.function.args ?? call.function.input;
-        if (fa !== undefined && fa !== null && !(typeof args === 'object' && args && !Array.isArray(args) && Object.keys(args).length)) args = fa;
-      }
-      if (typeof tool === 'string' && tool.includes(':') && !server) {
-        const i = tool.indexOf(':');
-        server = tool.slice(0, i);
-        tool = tool.slice(i + 1);
-      } else if (typeof tool === 'string' && tool.includes('/') && !server) {
-        const i = tool.indexOf('/');
-        server = tool.slice(0, i);
-        tool = tool.slice(i + 1);
-      }
-      server = String(server || '').trim();
-      tool = String(tool || '').trim();
-      if (!server || !tool) return null;
-      if (typeof args === 'string') {
-        const parsed = Utils.safeJsonParse(args, null);
-        if (parsed && typeof parsed === 'object') args = parsed;
-      }
-      if (args == null || typeof args !== 'object' || Array.isArray(args)) args = {};
-      return { server, tool, args };
-    },
-
-    tryParseMcpTerminalCommand(command) {
-      let cmd = String(command || '').trim();
-      if (!cmd) return null;
-      const isExplicitMcp = /^mcp-tool-call\s+/i.test(cmd);
-      if (isExplicitMcp) cmd = cmd.replace(/^mcp-tool-call\s+/i, '').trim();
-      if (!cmd) return null;
-      const m = cmd.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
-      if (!m) return null;
-      const server = m[1];
-      const tool = m[2];
-      const rest = (m[3] || '').trim();
-      if (!isExplicitMcp) {
-        const mcp = window.MCP;
-        const knownServer = !!(mcp && ((mcp.connections && mcp.connections.has(server)) || ((AppState.mcpServers || []).some(s => s && s.name === server))));
-        if (!knownServer) return null;
-      }
-      let args = {};
-      if (rest) {
-        const parsed = Utils.safeJsonParse(rest, null);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          args = parsed;
-        } else {
-          const kv = {};
-          const re = /([A-Za-z0-9_.-]+)=("([^"]*)"|'([^']*)'|([^\s]+))/g;
-          let mm; let found = false;
-          while ((mm = re.exec(rest)) !== null) { kv[mm[1]] = mm[3] ?? mm[4] ?? mm[5]; found = true; }
-          if (found) args = kv;
-          else args = { input: rest };
-        }
-      }
-      // Normalize github_repo_lookup: owner + repo -> owner/repo
-      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
-        args.repo = `${args.owner}/${args.repo}`;
-      }
-      return { server, tool, args };
-    },
-
-    _stableStringify(value) {
-      if (value === null || typeof value !== 'object') return JSON.stringify(value);
-      if (Array.isArray(value)) return '[' + value.map(v => this._stableStringify(v)).join(',') + ']';
-      const keys = Object.keys(value).sort();
-      return '{' + keys.map(k => JSON.stringify(k) + ':' + this._stableStringify(value[k])).join(',') + '}';
-    },
-
-    _mcpCallKey(server, tool, args) {
-      const s = String(server || '').toLowerCase();
-      let t = String(tool || '');
-      let normServer = s;
-      let normTool = t;
-      if ((s === 'builtin' || s === 'agent' || s === 'apex') && t === 'trigger_n8n_webhook') {
-        normServer = 'builtin';
-        normTool = 'trigger_n8n_webhook';
-      }
-      if ((s === 'builtin' || s === 'agent' || s === 'apex') && t === 'extract_binary_iocs') {
-        normServer = 'builtin';
-        normTool = 'extract_binary_iocs';
-      }
-      let a = args;
-      if (a == null || typeof a !== 'object' || Array.isArray(a)) a = {};
-      try { return `${normServer}:${normTool}:${this._stableStringify(a)}`; }
-      catch { try { return `${normServer}:${normTool}:${JSON.stringify(a)}`; } catch { return `${normServer}:${normTool}`; } }
-    },
-
-    async executeMcpCall(call, opts = {}) {
-      const resolved = this.resolveMcpCall(call);
-      if (!resolved) return { ok: false, skipped: true, error: 'Invalid MCP tool call' };
-      const { server, tool, args } = resolved;
-      // Built-in agent tool: trigger_n8n_webhook
-      if ((server === 'builtin' || server === 'agent' || server === 'apex') && tool === 'trigger_n8n_webhook') {
-        const label = `builtin:${tool}`;
-        const pill = this.addStatusPill(`⚡ Running n8n workflow...`, 'running');
-        try {
-          const event = (args && (args.event || args.name || args.type)) || 'manual';
-          const payload = (args && Object.prototype.hasOwnProperty.call(args, 'payload')) ? args.payload : (args || {});
-          const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
-          if (!bridge || typeof bridge.trigger !== 'function') throw new Error('n8n webhook bridge unavailable');
-          const result = await bridge.trigger(event, payload, { source: 'apex-ide', timeoutMs: 10000 });
-          const resultText = this.formatN8nBody(result?.body ?? result);
-          const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
-          this.updateStatusPill(pill, `⚡ n8n workflow triggered`, 'done');
-          return { ok: true, server: 'builtin', tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
-        } catch (e) {
-          const msg = e && e.message ? e.message : String(e);
-          this.updateStatusPill(pill, `⚡ n8n workflow failed${msg ? ': ' + msg : ''}`, 'error');
-          return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
-        }
-      }
-      // Built-in agent tool: extract_binary_iocs (IOC scan + embedded payload carving from loaded binary)
-      if ((server === 'builtin' || server === 'agent' || server === 'apex') && tool === 'extract_binary_iocs') {
-        const label = `builtin:${tool}`;
-        const pill = this.addStatusPill(`🧬 Extracting binary IOCs...`, 'running');
-        try {
-          if (!window.Workspace || typeof Workspace.extractBinaryIocs !== 'function') throw new Error('Binary IOC extractor unavailable');
-          const result = await Workspace.extractBinaryIocs(args || {});
-          if (result && result.ok === false) throw new Error(result.error || 'Binary IOC extraction failed');
-          const resultText = this.formatN8nBody(result);
-          const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
-          const counts = (result && result.counts) || {};
-          const carved = counts.carved ? `, carved ${counts.carved}` : '';
-          this.updateStatusPill(pill, `🧬 Binary IOCs extracted${carved}`, 'done');
-          return { ok: true, server: 'builtin', tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
-        } catch (e) {
-          const msg = e && e.message ? e.message : String(e);
-          this.updateStatusPill(pill, `🧬 Binary IOC extraction failed${msg ? ': ' + msg : ''}`, 'error');
-          return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
-        }
-      }
-      // Normalize github_repo_lookup: owner + repo -> owner/repo
-      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
-        args.repo = `${args.owner}/${args.repo}`;
-      }
-      const label = `${server}:${tool}`;
-      const pill = this.addStatusPill(`🔌 MCP ${label}...`, 'running');
-      try {
-        if (!window.MCP || typeof MCP.callTool !== 'function') throw new Error('MCP client unavailable');
-        const result = await MCP.callTool(server, tool, args);
-        const resultText = this.formatN8nBody(result);
-        const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
-        this.updateStatusPill(pill, `🔌 MCP ${label} completed`, 'done');
-        return { ok: true, server, tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
-      } catch (e) {
-        const msg = e && e.message ? e.message : String(e);
-        this.updateStatusPill(pill, `🔌 MCP ${label} failed`, 'error');
-        return { ok: false, server, tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
-      }
-    },
-
     parseAgentActions(text) {
-      const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null, tool_calls: [] };
+      const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null };
       if (!text) return actions;
       const fences = [...text.matchAll(/```(?:json:edits|json)\s*([\s\S]*?)```/gi)];
       for (const m of fences) {
         const obj = Utils.safeJsonParse(m[1], null);
-        if (!obj || typeof obj !== 'object') continue;
-        if (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || Array.isArray(obj.tool_calls) || obj.n8n || obj.notes) {
+        if (obj && (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || obj.n8n || obj.notes)) {
           if (Array.isArray(obj.edits)) actions.edits.push(...obj.edits);
           if (Array.isArray(obj.terminal)) actions.terminal.push(...obj.terminal);
           if (Array.isArray(obj.mcp)) actions.mcp.push(...obj.mcp);
-          if (Array.isArray(obj.tool_calls)) actions.tool_calls.push(...obj.tool_calls);
           if (obj.n8n) actions.n8n = obj.n8n;
           if (obj.notes) actions.notes += (actions.notes ? '\n' : '') + obj.notes;
-        } else if (obj.tool || obj.toolName || obj.function || (obj.name && obj.arguments) || (obj.name && obj.args)) {
-          // standalone tool call action object
-          actions.mcp.push(obj);
         }
       }
       return actions;
@@ -693,11 +592,8 @@
     },
     formatSearchResults(data) {
       if (!data) return 'No search response.';
-      const errStr = String((data && (data.error || data.searxngError || data.message)) || '');
-      const isSearxng502 = /searxng/i.test(errStr) && /502/.test(errStr);
-      if (errStr && (!data.results || !data.results.length)) {
-        if (isSearxng502) return 'Web search unavailable.';
-        return `Search unavailable: ${errStr}`;
+      if (data.error && (!data.results || !data.results.length)) {
+        return `Search unavailable: ${data.error}`;
       }
       const lines = [];
       if (data.answer) lines.push(`Answer: ${data.answer}`);
@@ -717,8 +613,7 @@
       // tool/search/automation notes
       for (const n of (toolNotes || [])) {
         const s = String(n || '');
-        if (/searxng/i.test(s) && /502/.test(s)) continue;
-        if (/^Web search:\s*\d+/i.test(s)) badges.push(`✓ Searched web`);
+        if (/^Web search:s*d+/i.test(s)) badges.push(`✓ Searched web`);
         else if (/^Web search:/i.test(s)) badges.push(`✓ Web search`);
         else if (/n8n workflow triggered/i.test(s)) badges.push(`✓ n8n workflow`);
         else if (/Binary analysis/i.test(s)) badges.push(`✓ Binary analyzed`);
@@ -729,8 +624,7 @@
       for (const r of (cmdResults || [])) {
         if (!r || !r.cmd) continue;
         const short = r.cmd.length > 42 ? r.cmd.slice(0, 39) + '…' : r.cmd;
-        if (r.mode === 'mcp') badges.push(`${r.ok === false ? '✗' : '✓'} MCP: ${short}`);
-        else if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
+        if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
         else if (r.remote) badges.push(`✓ Ran remotely: ${short}`);
         else badges.push(`✓ Ran: ${short}`);
       }
@@ -746,10 +640,12 @@
       const autoApplyEl = document.getElementById('agentAutoApply');
       const useRag = opts.useRag ?? (useRagEl ? useRagEl.checked : true);
       const autoApply = autoApplyEl ? autoApplyEl.checked : true;
-      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       const toolNotes = [];
       let extraContext = '';
       let ragMeta = '';
+      const execSummary = [];
+      const cmdResults = [];
+      let nativeToolCallsAccum = [];
 
       // 1) Unified autonomous tool routing (pre-LLM): web search, binary context, n8n, MCP, RAG
       const wantsSearch = this.shouldSearch(prompt);
@@ -758,43 +654,17 @@
         try {
           const data = await this.performWebSearch(prompt);
           const formatted = this.formatSearchResults(data);
-          const results = Array.isArray(data.results) ? data.results : [];
-          const ok = results.length > 0;
-          const errStr = String((data && (data.error || data.searxngError || data.message)) || '');
-          const searxngUnavailable = /searxng/i.test(errStr) && (/502|503|504|bad gateway|unavailable|timed out|timeout|failed|error/i.test(errStr) || /\b5\d\d\b/.test(errStr));
+          const ok = Array.isArray(data.results) && data.results.length > 0;
           extraContext += `\n\n--- Web Search Results (/api/search) ---\n${formatted}`;
-          if (ok) {
-            toolNotes.push(`Web search: ${results.length} result(s)`);
-            this.updateStatusPill(pill, `🔍 Searched web (${results.length} sources)`, 'done');
-          } else if (searxngUnavailable) {
-            // SearXNG unavailable (e.g. 502) - degrade gracefully without warning pill/note
-            this.updateStatusPill(pill, '🔍 Web search unavailable', 'done');
-          } else if (errStr) {
-            toolNotes.push(`Web search: ${errStr}`);
-            this.updateStatusPill(pill, `🔍 Web search: ${errStr}`, 'warn');
-          } else {
-            toolNotes.push('Web search: no results');
-            this.updateStatusPill(pill, '🔍 Web search: no results', 'done');
-          }
+          toolNotes.push(ok ? `Web search: ${data.results.length} result(s)` : (data.error ? `Web search: ${data.error}` : 'Web search: no results'));
+          this.updateStatusPill(pill, ok ? `🔍 Searched web (${data.results.length} sources)` : `🔍 Web search: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
         } catch (e) {
-          const errStr = String(e && e.message || e || '');
-          const searxngUnavailable = /searxng/i.test(errStr) && (/502|503|504|unavailable|timed out|timeout|failed|error/i.test(errStr) || /\b5\d\d\b/.test(errStr));
-          if (searxngUnavailable) {
-            this.updateStatusPill(pill, '🔍 Web search unavailable', 'done');
-          } else {
-            toolNotes.push(`Web search failed: ${errStr}`);
-            this.updateStatusPill(pill, `🔍 Web search failed: ${errStr}`, 'error');
-          }
+          toolNotes.push(`Web search failed: ${e.message}`);
+          this.updateStatusPill(pill, `🔍 Web search failed: ${e.message}`, 'error');
         }
       }
 
       let contextBlock = this.collectWorkspaceSummary();
-
-      // Attached files (universal upload): text/code content, zip extracted paths, binary metadata/hash/strings/headers, image notes
-      if (attachments.length && window.Workspace && Workspace.buildAgentAttachmentContext) {
-        const attachCtx = Workspace.buildAgentAttachmentContext(attachments);
-        if (attachCtx) extraContext += `\n\n${attachCtx}`;
-      }
 
       // Binary inspector: automatically include loaded/parsed binary analysis in agent context
       if (window.BinaryInspector) {
@@ -812,7 +682,6 @@
             this.updateStatusPill(pill, `🧪 Binary analysis failed: ${e.message}`, 'error');
           }
         } else if (binText) {
-          // already parsed/loaded - make available to agent automatically
           toolNotes.push(`Binary context: ${(BinaryInspector.lastAnalysis && BinaryInspector.lastAnalysis.name) || (BinaryInspector.selectedFile && BinaryInspector.selectedFile.name) || 'loaded'}`);
         }
         if (binText) {
@@ -835,16 +704,14 @@
         }
       }
 
-      // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions
+      // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions (context + dynamic tool schema)
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
-      if (!mcpTools.some(t => (t.name || t.id) === 'trigger_n8n_webhook')) {
-        mcpTools.unshift({ server: 'builtin', name: 'trigger_n8n_webhook', description: 'POST {event,payload,source:"apex-ide",timestamp} to configured n8n webhook URL and return JSON response. Args: { event, payload }.' });
-      }
-      if (!mcpTools.some(t => (t.name || t.id) === 'extract_binary_iocs')) {
-        mcpTools.unshift({ server: 'builtin', name: 'extract_binary_iocs', description: 'Scan currently loaded binary ArrayBuffer for URLs, IPv4 addresses, Windows registry paths, file paths, and embedded magic bytes (PK\\x03\\x04, MZ, 7z\\xBC\\xAF, Rar!). Args: { carve?:boolean, types?:string[]|string, offsets?:number[], maxCarve?:number } to carve embedded payloads as downloadable files into Workspace. Returns JSON report.' });
-      }
+      const llmTools = (typeof this.getLlmTools === 'function') ? this.getLlmTools() : [];
       if (mcpTools.length) {
-        contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');
+        contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id} (function tool name: mcp__${t.server}__${t.name || t.id})${t.description ? ' - ' + t.description : ''}`).join('\n');
+      }
+      if (llmTools.length) {
+        contextBlock += `\n\n--- Available Function Tools (LLM schema) ---\n` + llmTools.map(t => `- ${(t.function && t.function.name) || t.name || '(unnamed)'}`).join('\n');
       }
 
       // RAG: auto-retrieved snippets
@@ -856,27 +723,104 @@
       }
 
       contextBlock += extraContext;
-      const userPromptText = String(prompt || '').trim() || (attachments.length ? 'Please analyze the attached file(s) and respond helpfully.' : '');
-      const textPayload = `${userPromptText}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+      const system = AppState.settings.systemPrompt || '';
+      const userPayload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
 
-      // For vision-capable models, include uploaded images as image_url content parts
-      let userContent = textPayload;
-      const imageAtts = attachments.filter(a => a && a.kind === 'image' && a.dataUrl);
-      if (imageAtts.length) {
-        const parts = [{ type: 'text', text: textPayload }];
-        for (const img of imageAtts) {
-          parts.push({ type: 'image_url', image_url: { url: String(img.dataUrl) } });
-        }
-        userContent = parts;
-      }
-
-      // 2) Stream response live (bubble already shows immediate "Thinking...")
+      // 2) LLM call with dynamic MCP tool schema; handle tool_calls loop (routed to MCP JSON-RPC tools/call)
       let answer = '';
       try {
-        answer = await this.callLLM(userContent, {
-          stream: true,
-          onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
-        });
+        const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
+        if (provider === 'openai-compatible' && llmTools.length) {
+          let messages = [
+            { role: 'system', content: system },
+            { role: 'user', content: userPayload }
+          ];
+          const maxRounds = 4;
+          for (let round = 0; round < maxRounds; round++) {
+            const res = await this.callLLM(messages, {
+              stream: round === 0,
+              onDelta: round === 0 ? (delta) => { if (streamBubble) streamBubble.append(delta); } : undefined,
+              tools: llmTools
+            });
+            const text = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
+            const toolCalls = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
+            if (round === 0) answer = text;
+            else if (text) answer = (answer ? answer + '\n\n' : '') + text;
+
+            if (!toolCalls.length) break;
+            nativeToolCallsAccum.push(...toolCalls);
+
+            messages.push({
+              role: 'assistant',
+              content: text || '',
+              tool_calls: toolCalls.map(tc => ({
+                id: tc.id,
+                type: tc.type || 'function',
+                function: { name: tc.function && tc.function.name, arguments: tc.function && tc.function.arguments }
+              }))
+            });
+
+            for (const tc of toolCalls) {
+              const fname = tc.function && tc.function.name ? String(tc.function.name) : '';
+              const fargsRaw = tc.function ? tc.function.arguments : '{}';
+              const fargs = (typeof this.normalizeToolCallArgs === 'function')
+                ? this.normalizeToolCallArgs(fargsRaw)
+                : (Utils.safeJsonParse(fargsRaw, {}) || {});
+              let toolResultText = '';
+              try {
+                const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
+                if (mcpTarget && window.MCP && typeof MCP.callTool === 'function') {
+                  const pill = this.addStatusPill(`🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}...`, 'running');
+                  try {
+                    const result = await MCP.callTool(mcpTarget.server, mcpTarget.tool, fargs);
+                    toolResultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
+                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} completed`, 'done');
+                  } catch (e) {
+                    toolResultText = `Error: ${e.message || e}`;
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) failed: ${e.message || e}`);
+                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} failed`, 'error');
+                  }
+                } else if (fname === 'run_shell' || fname === 'terminal' || fname === ':terminal') {
+                  const cmd = (fargs && (fargs.command || fargs.cmd)) ? String(fargs.command || fargs.cmd) : '';
+                  if (cmd && window.TerminalPanel && typeof TerminalPanel.executeCommand === 'function') {
+                    const configured = TerminalPanel.getConfiguredUrl ? TerminalPanel.getConfiguredUrl() : '';
+                    const willRemote = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl()) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!configured;
+                    const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${cmd.slice(0,40)}` : `▶ Running: ${cmd.slice(0,40)}`, 'running');
+                    const r = await TerminalPanel.executeCommand(cmd);
+                    const ok = r && r.ok !== false;
+                    const out = String((r && (r.stdout || r.output)) || '').trim();
+                    const err = String((r && r.stderr) || '').trim();
+                    toolResultText = (out || '') + (err ? (out ? '\n[stderr]\n' : '[stderr]\n') + err : '');
+                    if (!toolResultText) toolResultText = ok ? '(no output)' : 'Command failed';
+                    const usedRemote = (r && (r.mode === 'remote' || r.mode === 'remote-http')) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
+                    cmdResults.push({ cmd, ...(r || {}), remote: usedRemote });
+                    execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmd}`);
+                    this.updateStatusPill(pill, ok ? (usedRemote ? '✓ Ran remotely' : `✓ Ran: ${cmd.slice(0,36)}`) : '✗ Command failed', ok ? 'done' : 'error');
+                  } else {
+                    toolResultText = 'Error: terminal not available or missing command';
+                  }
+                } else {
+                  toolResultText = `Unknown or unsupported tool: ${fname}`;
+                }
+              } catch (e) {
+                toolResultText = `Tool execution error: ${e.message || e}`;
+              }
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id || `call_${Math.random().toString(36).slice(2)}`,
+                content: String(toolResultText).slice(0, 12000)
+              });
+            }
+          }
+        } else {
+          const res = await this.callLLM(userPayload, {
+            stream: true,
+            onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
+          });
+          answer = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
+          nativeToolCallsAccum = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
+        }
       } catch (e) {
         if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         throw e;
@@ -884,12 +828,9 @@
       if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
       if (!answer && streamBubble) answer = streamBubble.getText();
 
-      // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n)
+      // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n) from text blocks
       const actions = this.parseAgentActions(answer || '');
-      const execSummary = [];
-      const cmdResults = [];
       let applied = [];
-      const seenToolCalls = new Set();
 
       // Workspace & Editor: apply edits, auto-open editor, RAG auto-indexes via state events
       if (autoApply && actions.edits.length && window.Editor) {
@@ -903,96 +844,65 @@
       }
 
       // Terminal/runner: in-browser execution engine or remote bridge; capture real stdout/stderr for agent response
-      // Intercept explicit `mcp-tool-call ...` and terminal commands in the form <serverName>:<toolName> and route them via MCP.callTool()
-      if (actions.terminal && actions.terminal.length) {
+      if (actions.terminal && actions.terminal.length && window.TerminalPanel) {
         for (const t of actions.terminal) {
           if (!t?.command) continue;
-          const cmdStr = String(t.command).trim();
-          const mcpRoute = this.tryParseMcpTerminalCommand(cmdStr);
-          if (mcpRoute && window.MCP && MCP.callTool) {
-            const resolvedRoute = this.resolveMcpCall(mcpRoute);
-            const routeKey = resolvedRoute ? this._mcpCallKey(resolvedRoute.server, resolvedRoute.tool, resolvedRoute.args) : null;
-            if (routeKey && seenToolCalls.has(routeKey)) {
-              continue; // deduplicate identical tool call within same assistant turn
-            }
-            if (routeKey) seenToolCalls.add(routeKey);
-            if (window.TerminalPanel) { TerminalPanel.ensureShown && TerminalPanel.ensureShown(); TerminalPanel.write(`$ ${cmdStr}`); }
-            const res = await this.executeMcpCall(mcpRoute, { cmd: cmdStr });
-            cmdResults.push({ cmd: cmdStr, ...res, remote: false });
-            if (res.ok) {
-              execSummary.push(`MCP ${mcpRoute.server}:${mcpRoute.tool} result: ${String(res.stdout || '').slice(0, 500)}`);
-              if (window.TerminalPanel && res.stdout) TerminalPanel.writeRaw(res.stdout + (String(res.stdout).endsWith('\n') ? '' : '\n'));
-            } else {
-              execSummary.push(`MCP ${mcpRoute.server}:${mcpRoute.tool} failed: ${res.stderr || res.error || 'unknown error'}`);
-              if (window.TerminalPanel && (res.stderr || res.error)) TerminalPanel.writeRaw('\x1b[31m' + String(res.stderr || res.error) + '\x1b[0m' + '\r\n');
-            }
-            continue;
-          }
-          if (!window.TerminalPanel) continue;
-          const willRemote = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
-          const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${cmdStr.slice(0, 40)}` : `▶ Running: ${cmdStr.slice(0, 40)}`, 'running');
+          const willHttp = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
+          const willRemoteWs = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
+          const pill = this.addStatusPill((willHttp || willRemoteWs) ? `▶ Running remotely: ${String(t.command).slice(0, 40)}` : `▶ Running: ${String(t.command).slice(0, 40)}`, 'running');
           try {
-            const res = await TerminalPanel.executeCommand(cmdStr);
-            const usedRemote = (res && res.mode === 'remote') || willRemote;
-            cmdResults.push({ cmd: cmdStr, ...res, remote: usedRemote });
+            const res = await TerminalPanel.executeCommand(t.command);
+            const usedRemote = (res && (res.mode === 'remote' || res.mode === 'remote-http')) || willRemoteWs || willHttp;
+            cmdResults.push({ cmd: t.command, ...res, remote: usedRemote });
             const ok = res && res.ok !== false;
             const out = String((res && (res.stdout || res.output)) || '').trim();
             const err = String((res && res.stderr) || '').trim();
-            execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmdStr}`);
+            execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${t.command}`);
             if (out) execSummary.push(`stdout: ${out.slice(0, 800)}${out.length > 800 ? '…' : ''}`);
             if (err) execSummary.push(`stderr: ${err.slice(0, 800)}${err.length > 800 ? '…' : ''}`);
-            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${cmdStr.slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
+            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
           } catch (e) {
-            cmdResults.push({ cmd: cmdStr, ok: false, stderr: e.message, stdout: '', mode: (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) ? 'remote' : 'browser' });
-            execSummary.push(`Command error: ${cmdStr} — ${e.message}`);
+            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: 'browser' });
+            execSummary.push(`Command error: ${t.command} — ${e.message}`);
             this.updateStatusPill(pill, `✗ Command error`, 'error');
           }
         }
       }
 
-      // MCP tool calls requested by agent (structured "mcp" / "tool_calls" actions, and standalone tool objects)
-      const mcpCalls = [];
-      if (Array.isArray(actions.mcp)) mcpCalls.push(...actions.mcp);
-      if (Array.isArray(actions.tool_calls)) mcpCalls.push(...actions.tool_calls);
-      if (mcpCalls.length) {
-        for (const call of mcpCalls) {
-          const resolvedCall = this.resolveMcpCall(call);
-          if (resolvedCall) {
-            const callKey = this._mcpCallKey(resolvedCall.server, resolvedCall.tool, resolvedCall.args);
-            if (seenToolCalls.has(callKey)) continue; // deduplicate identical tool call within same assistant turn
-            seenToolCalls.add(callKey);
+      // MCP tool calls requested by agent in structured action blocks
+      if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
+        for (const call of actions.mcp) {
+          let server = call.server || call.serverName;
+          let tool = call.tool || call.name || call.toolName;
+          const args = call.arguments || call.args || {};
+          if ((!server || !tool) && call.name) {
+            const parsed = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
+            if (parsed) { server = parsed.server; tool = parsed.tool; }
           }
-          const res = await this.executeMcpCall(call);
-          if (res.skipped) continue;
-          cmdResults.push(res);
-          if (res.ok) {
-            execSummary.push(`MCP ${res.server}:${res.tool} result: ${String(res.stdout || '').slice(0, 500)}`);
-          } else {
-            execSummary.push(`MCP ${res.server}:${res.tool} failed: ${res.stderr || res.error || 'unknown error'}`);
+          if (!server || !tool) continue;
+          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
+          try {
+            const result = await MCP.callTool(server, tool, args);
+            execSummary.push(`MCP ${server}:${tool} result: ${this.formatN8nBody(result).slice(0, 500)}`);
+            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
+          } catch (e) {
+            execSummary.push(`MCP ${server}:${tool} failed: ${e.message}`);
+            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
           }
         }
       }
 
-      // n8n action requested by agent (deduped against identical trigger_n8n_webhook/tool calls in same turn)
+      // n8n action requested by agent
       if (actions.n8n) {
-        const n8nRaw = actions.n8n;
-        const msg = (typeof n8nRaw === 'string') ? n8nRaw : (n8nRaw.message || n8nRaw.prompt || prompt);
-        const n8nEvent = (n8nRaw && typeof n8nRaw === 'object' && (n8nRaw.event || n8nRaw.type || n8nRaw.name)) || 'manual';
-        const n8nPayload = (n8nRaw && typeof n8nRaw === 'object' && Object.prototype.hasOwnProperty.call(n8nRaw, 'payload'))
-          ? n8nRaw.payload
-          : ((n8nRaw && typeof n8nRaw === 'object') ? n8nRaw : msg);
-        const n8nKey = this._mcpCallKey('builtin', 'trigger_n8n_webhook', { event: n8nEvent, payload: n8nPayload });
-        if (!seenToolCalls.has(n8nKey)) {
-          seenToolCalls.add(n8nKey);
-          const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
-          const r = await this.triggerN8n(msg, typeof n8nRaw === 'object' ? n8nRaw : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
-          if (r.ok) {
-            execSummary.push(`n8n workflow result: ${this.formatN8nBody(r.result?.body).slice(0, 500)}`);
-            this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
-          } else {
-            execSummary.push(`n8n action failed: ${r.error}`);
-            this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error');
-          }
+        const msg = (typeof actions.n8n === 'string') ? actions.n8n : (actions.n8n.message || actions.n8n.prompt || prompt);
+        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+        const r = await this.triggerN8n(msg, typeof actions.n8n === 'object' ? actions.n8n : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
+        if (r.ok) {
+          execSummary.push(`n8n workflow result: ${this.formatN8nBody(r.result?.body).slice(0, 500)}`);
+          this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
+        } else {
+          execSummary.push(`n8n action failed: ${r.error}`);
+          this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error');
         }
       }
 
@@ -1013,9 +923,8 @@
       }
       if (cmdResults.length) {
         const blocks = cmdResults.map(r => {
-          const head = r.mode === 'mcp'
-            ? `$ ${r.cmd}  (mcp tool call)`
-            : `$ ${r.cmd}${r.remote ? '  (remote shell)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
+          const isRemote = r.remote || r.mode === 'remote' || r.mode === 'remote-http';
+          const head = `$ ${r.cmd}${isRemote ? '  (remote runner)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
           const out = String(r.stdout || r.output || '').replace(/\s+$/,'');
           const err = String(r.stderr || '').replace(/\s+$/,'');
           let b = head;
@@ -1033,8 +942,9 @@
       if (streamBubble) streamBubble.finalize(display, badges);
       else this.addMessage('assistant', display, 'chat', badges);
 
-      return { text: answer || '', display, actions, execution: execSummary, tools: toolNotes, applied, cmdResults };
+      return { text: answer || '', display, actions, execution: execSummary, tools: toolNotes, applied, cmdResults, nativeToolCalls: nativeToolCallsAccum };
     }
+
   };
   window.Agent = Agent;
 })();

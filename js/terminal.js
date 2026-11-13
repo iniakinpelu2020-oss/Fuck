@@ -46,9 +46,10 @@
       // Default to browser sandbox until/unless remote connects
       this.setStatus('browser');
 
-      // Auto-connect on page load if a remote bridge URL is already saved
+      // Auto-connect/apply runner config on page load if a remote URL is already saved
       if (saved) {
-        this.connect(saved, { silent: true, auto: true });
+        if (this.isHttpRunnerUrl(saved)) this.applyRunnerConfig(saved, { silent: true, auto: true });
+        else this.connect(saved, { silent: true, auto: true });
       }
     },
 
@@ -73,10 +74,23 @@
       el.title = s === 'connected' ? 'Connected to remote WebSocket shell bridge' : (s === 'connecting' ? 'Connecting to remote shell bridge' : 'In-browser execution engine active');
     },
 
+    isHttpRunnerUrl(url) {
+      return /^https?:\/\//i.test(String(url || '').trim());
+    },
+
+    isWsRunnerUrl(url) {
+      return /^wss?:\/\//i.test(String(url || '').trim());
+    },
+
     getConfiguredUrl() {
       const el = document.getElementById('terminalWsUrl');
       const v = (el && el.value ? String(el.value).trim() : '') || (window.AppState && AppState.settings && AppState.settings.terminalWs) || this.remoteUrl || '';
       return String(v || '').trim();
+    },
+
+    getHttpRunnerUrl() {
+      const url = this.getConfiguredUrl();
+      return this.isHttpRunnerUrl(url) ? url : '';
     },
 
     persistUrl(url) {
@@ -110,6 +124,34 @@
         this.connect(url, { silent: true, auto: true });
       }, delay);
       this._reconnectDelay = Math.min(this._maxReconnectDelay, Math.max(1000, Math.floor(delay * 1.7)));
+    },
+
+    applyRunnerConfig(url, opts = {}) {
+      const configured = String(url != null ? url : this.getConfiguredUrl() || '').trim();
+      this.persistUrl(configured);
+      if (!configured) {
+        this.disconnect(true);
+        this.setStatus('browser');
+        if (!opts.silent && window.Utils) Utils.toast('No Remote Runner URL set; using Browser Sandbox', 'info');
+        return { mode: 'browser', url: '' };
+      }
+      if (this.isHttpRunnerUrl(configured)) {
+        // HTTP(S) runner: commands are executed via POST per-command; no WebSocket session
+        this.disconnect(true);
+        this.remoteUrl = configured;
+        const el = document.getElementById('terminalStatus');
+        if (el) {
+          el.textContent = 'Remote Runner (HTTP)';
+          el.className = 'badge badge-success text-green-400 ';
+          el.title = `Remote HTTP runner configured: ${configured}`;
+        }
+        this.connected = false;
+        this.write(`\x1b[32mRemote Runner configured (HTTP): ${configured}\x1b[0m`);
+        if (!opts.silent && window.Utils) Utils.toast('Remote HTTP Runner configured', 'success');
+        return { mode: 'http', url: configured };
+      }
+      // WebSocket runner URL
+      return this.connect(configured, opts);
     },
 
     connect(url, opts = {}) {
@@ -558,51 +600,89 @@
       });
     },
 
-    // --- MCP tool-call fallback routing ---
-    parseMcpToolCallCommand(command) {
-      let cmd = String(command || '').trim();
-      if (!/^mcp-tool-call\s+/i.test(cmd)) return null;
-      cmd = cmd.replace(/^mcp-tool-call\s+/i, '').trim();
-      if (!cmd) return null;
-      const m = cmd.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
+    async execRemoteHttp(command, opts = {}) {
+      const url = this.getHttpRunnerUrl();
+      if (!url) {
+        return { ok: false, stdout: '', stderr: 'Remote runner URL not configured', output: 'Remote runner URL not configured', mode: 'remote-http', code: 1 };
+      }
+      const timeoutMs = Number(opts.timeoutMs || 120000);
+      const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: String(command || '') }),
+          signal: controller ? controller.signal : undefined
+        });
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        let data = null;
+        let text = '';
+        if (ct.includes('application/json')) {
+          data = await res.json().catch(() => null);
+        } else {
+          text = await res.text().catch(() => '');
+          try { data = JSON.parse(text); } catch { data = null; }
+        }
+        let output = '';
+        if (data && typeof data === 'object') {
+          if (typeof data.output === 'string') output = data.output;
+          else if (typeof data.stdout === 'string' || typeof data.stderr === 'string') {
+            const so = String(data.stdout || '');
+            const se = String(data.stderr || '');
+            output = so + (se ? (so ? '\n' : '') + se : '');
+          } else if (typeof data.result === 'string') output = data.result;
+          else output = JSON.stringify(data, null, 2);
+        } else if (text) {
+          output = text;
+        }
+        if (output == null) output = '';
+        if (!res.ok) {
+          const errMsg = (data && (data.error || data.message)) ? String(data.error || data.message) : `HTTP ${res.status}`;
+          const combined = String(output || errMsg);
+          return { ok: false, stdout: output, stderr: errMsg, output: combined, mode: 'remote-http', code: res.status, status: res.status, data };
+        }
+        return { ok: true, stdout: output, stderr: '', output: String(output), mode: 'remote-http', code: 0, status: res.status, data };
+      } catch (e) {
+        const msg = (e && e.name === 'AbortError') ? `Remote runner request timed out after ${Math.round(timeoutMs/1000)}s` : (e && e.message ? e.message : String(e));
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 1, error: msg };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
+
+    parseMcpTerminalCommand(command) {
+      // Intercept "<serverName>:<toolName> {jsonArgs}" or "<serverName>:<toolName> key=value ..." and route via MCP.callTool
+      const s = String(command || '').trim();
+      if (!s) return null;
+      const m = s.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
       if (!m) return null;
       const server = m[1];
       const tool = m[2];
+      if (server === 'http' || server === 'https' || server === 'ws' || server === 'wss') return null; // avoid URL-like false positives
       const rest = (m[3] || '').trim();
       let args = {};
       if (rest) {
-        let parsed = null;
-        try { parsed = JSON.parse(rest); } catch {}
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          args = parsed;
-        } else {
-          args = { input: rest };
-        }
-      }
-      // Normalize github_repo_lookup: owner + repo -> owner/repo
-      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
-        args.repo = `${args.owner}/${args.repo}`;
+        const parsed = (window.Utils && Utils.safeJsonParse) ? Utils.safeJsonParse(rest, null) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed;
+        else if (parsed != null) args = { value: parsed };
+        else args = { input: rest };
       }
       return { server, tool, args };
     },
 
-    async execMcpToolCall(command) {
-      const parsed = this.parseMcpToolCallCommand(command);
-      if (!parsed) return null;
-      const { server, tool, args } = parsed;
+    async executeMcpCommand(server, tool, args) {
       if (!(window.MCP && typeof MCP.callTool === 'function')) {
-        return { ok: false, stdout: '', stderr: 'MCP client unavailable', output: 'MCP client unavailable', mode: 'mcp' };
+        const msg = 'MCP client not available';
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'mcp', code: 1 };
       }
       try {
-        const result = await MCP.callTool(server, tool, args);
-        let out = '';
-        if (typeof result === 'string') out = result;
-        else { try { out = JSON.stringify(result, null, 2); } catch { out = String(result); } }
-        if (out.length > 12000) out = out.slice(0, 12000) + '\n…(truncated)';
-        return { ok: true, stdout: out, stderr: '', output: out, mode: 'mcp', result };
+        const res = await MCP.callTool(server, tool, args || {});
+        const out = typeof res === 'string' ? res : JSON.stringify(res, null, 2);
+        return { ok: true, stdout: out, stderr: '', output: out, mode: 'mcp', code: 0, data: res, server, tool };
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
-        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'mcp' };
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'mcp', code: 1, error: msg, server, tool };
       }
     },
 
@@ -612,26 +692,36 @@
       this.ensureShown();
       this.write(`$ ${cmd}`);
 
-      // Fallback: intercept `mcp-tool-call <server>:<tool> <json-args>` and route via MCP.callTool()
-      if (/^mcp-tool-call\s+/i.test(cmd)) {
-        const mcpRes = await this.execMcpToolCall(cmd);
-        if (mcpRes) {
-          if (mcpRes.stdout) this.writeRaw(mcpRes.stdout + (String(mcpRes.stdout).endsWith('\n') ? '' : '\n'));
-          if (mcpRes.stderr) this.writeRaw('\x1b[31m' + mcpRes.stderr + (String(mcpRes.stderr).endsWith('\n') ? '' : '\n') + '\x1b[0m');
-          return mcpRes;
-        }
+      // Route "<serverName>:<toolName> ..." to MCP.callTool (do not use browser/remote shell runner)
+      const mcpCall = (typeof this.parseMcpTerminalCommand === 'function') ? this.parseMcpTerminalCommand(cmd) : null;
+      if (mcpCall && window.MCP && typeof MCP.callTool === 'function') {
+        const result = await this.executeMcpCommand(mcpCall.server, mcpCall.tool, mcpCall.args);
+        // Mirror captured output to xterm for MCP calls
+        if (result && result.stdout) this.writeRaw(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
+        if (result && result.stderr) this.writeRaw('\x1b[31m' + result.stderr + (result.stderr.endsWith('\n') ? '' : '\n') + '\x1b[0m');
+        if (result && result.ok && !result.stdout && !result.stderr) this.write('(no output)\n');
+        this._last = result;
+        return result;
       }
 
       let result;
-      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      const httpRunner = this.getHttpRunnerUrl();
+      if (httpRunner) {
+        result = await this.execRemoteHttp(cmd);
+      } else if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         result = await this.execRemote(cmd);
       } else {
-        // default: in-browser execution (never fail with "Terminal not connected")
-        result = await this.execInBrowser(cmd);
+        // Only use browser runner when no Remote Runner URL is set
+        if (this.getConfiguredUrl()) {
+          const msg = 'Remote runner configured but not connected/available';
+          result = { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote', code: 1 };
+        } else {
+          result = await this.execInBrowser(cmd);
+        }
       }
-      // Mirror captured output to xterm for browser runs (remote streams already mirrored);
-      // avoid duplicating if output was already streamed, but browser results aren't streamed.
-      if (result && result.mode === 'browser') {
+      // Mirror captured output to xterm for browser runs and HTTP remote runs
+      const mirrorMode = result && (result.mode === 'browser' || result.mode === 'remote-http');
+      if (mirrorMode) {
         if (result.stdout) this.writeRaw(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
         if (result.stderr) this.writeRaw('\x1b[31m' + result.stderr + (result.stderr.endsWith('\n') ? '' : '\n') + '\x1b[0m');
       }
