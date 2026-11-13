@@ -278,7 +278,6 @@
         AppState.settings.ragK = Number(document.getElementById('settingRagK').value || 6);
         AppState.settings.terminalWs = document.getElementById('settingTerminalWs').value.trim();
         AppState.settings.webhookUrl = document.getElementById('settingWebhookUrl').value.trim();
-        AppState.settings.githubToken = document.getElementById('settingGithubToken').value.trim();
         AppState.saveSettings();
         document.getElementById('terminalWsUrl').value = AppState.settings.terminalWs || '';
         this.closeSettings();
@@ -360,7 +359,6 @@
       document.getElementById('settingRagK').value = AppState.settings.ragK || 6;
       document.getElementById('settingTerminalWs').value = AppState.settings.terminalWs || '';
       document.getElementById('settingWebhookUrl').value = AppState.settings.webhookUrl || '';
-      document.getElementById('settingGithubToken').value = AppState.settings.githubToken || '';
     },
 
     openSettings() {

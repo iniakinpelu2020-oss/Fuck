@@ -5,7 +5,6 @@
       document.getElementById('btnNewFile').addEventListener('click', () => this.newFilePrompt());
       document.getElementById('btnDeleteFile').addEventListener('click', () => this.deleteActive());
       document.getElementById('btnSaveFile').addEventListener('click', () => this.saveActiveFile());
-      document.getElementById('btnCloneRepo').addEventListener('click', () => this.cloneGithubRepo());
       AppState.subscribe((evt) => {
         if (['workspace:changed','workspace:reset','file:changed','file:active'].includes(evt)) this.render();
       });
@@ -223,65 +222,6 @@
         dir = await dir.getDirectoryHandle(parts[i], { create: true });
       }
       return await dir.getFileHandle(parts[parts.length - 1], { create: true });
-    },
-
-    async cloneGithubRepo() {
-      const input = document.getElementById('githubRepoInput').value.trim();
-      const branchInput = document.getElementById('githubBranchInput').value.trim();
-      const status = document.getElementById('githubStatus');
-      if (!input) return Utils.toast('Enter a GitHub repository', 'error');
-      const repo = this.parseRepo(input);
-      if (!repo) return Utils.toast('Invalid repository format', 'error');
-      status.textContent = 'Fetching repository metadata...';
-      try {
-        const headers = { 'Accept': 'application/vnd.github+json' };
-        if (AppState.settings.githubToken) headers.Authorization = `Bearer ${AppState.settings.githubToken}`;
-        const repoRes = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, { headers });
-        if (!repoRes.ok) throw new Error(`Repo lookup failed (${repoRes.status})`);
-        const repoInfo = await repoRes.json();
-        const branch = branchInput || repoInfo.default_branch || 'main';
-        status.textContent = `Fetching tree for ${branch}...`;
-        const treeRes = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, { headers });
-        if (!treeRes.ok) throw new Error(`Tree fetch failed (${treeRes.status})`);
-        const treeInfo = await treeRes.json();
-        const blobs = (treeInfo.tree || []).filter(n => n.type === 'blob');
-        if (!confirm(`Import ${blobs.length} files from ${repo.owner}/${repo.repo}@${branch} into a new memory workspace?`)) {
-          status.textContent = 'Cancelled.'; return;
-        }
-        AppState.resetWorkspaceMemory();
-        AppState.workspaceName = `${repo.owner}/${repo.repo}@${branch}`;
-        let loaded = 0, skipped = 0;
-        for (const item of blobs) {
-          if (loaded >= 250) { skipped += (blobs.length - loaded); break; }
-          if (!Utils.isTextLike(item.path) || (item.size && item.size > 200 * 1024)) { skipped++; continue; }
-          status.textContent = `Fetching ${loaded + 1}/${Math.min(blobs.length,250)}: ${item.path}`;
-          const contentRes = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${item.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`, { headers });
-          if (!contentRes.ok) { skipped++; continue; }
-          const meta = await contentRes.json();
-          let content = '';
-          if (meta.encoding === 'base64' && typeof meta.content === 'string') {
-            content = decodeURIComponent(escape(atob(meta.content.replace(/\n/g, ''))));
-          } else if (typeof meta.content === 'string') {
-            content = meta.content;
-          } else { skipped++; continue; }
-          AppState.upsertFile(item.path, content, { dirty: false, binary: false, source: 'github' });
-          loaded++;
-        }
-        const first = AppState.files.keys().next().value;
-        if (first) AppState.setActiveFile(first);
-        AppState.emit('workspace:changed');
-        status.textContent = `Imported ${loaded} files. Skipped ${skipped} (binary/large/rate-limit/cap).`;
-        Utils.toast(`GitHub repo imported (${loaded} files)`, 'success');
-      } catch (e) {
-        status.textContent = `Error: ${e.message}`;
-        Utils.toast(`GitHub clone failed: ${e.message}`, 'error');
-      }
-    },
-
-    parseRepo(input) {
-      const m = input.match(/github\.com\/([^\/]+)\/([^\/#?]+)/i) || input.match(/^([^\/\s]+)\/([^\/\s]+)$/);
-      if (!m) return null;
-      return { owner: m[1], repo: m[2].replace(/\.git$/, '') };
     }
   };
 

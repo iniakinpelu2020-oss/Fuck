@@ -29,8 +29,7 @@ Behavior:
 - If no edits are needed, use an empty edits array. Keep user-facing prose clean (do not rely on users reading raw JSON).`,
     ragK: 6,
     terminalWs: 'ws://localhost:3001/terminal',
-    webhookUrl: DEFAULT_N8N_WEBHOOK_URL,
-    githubToken: ''
+    webhookUrl: ''
   };
 
   const State = {

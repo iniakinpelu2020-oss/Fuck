@@ -109,6 +109,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .input:focus { outline: none; border-color: rgba(59,130,246,0.55); box-shadow: 0 0 0 3px rgba(59,130,246,0.12); background: #161922; }
 .input-compact { padding: 0.3rem 0.5rem; font-size: 11.5px; border-radius: 7px; }
 textarea.input { resize: vertical; min-height: 2.2rem; }
+/* Ensure chat textarea placeholder/text does not overlap the + attach button on mobile */
+#chatInput.input { padding-left: 2.5rem !important; padding-right: 3rem !important; }
 select.input { padding-right: 1.8rem; }
 
 .status-pill, .badge {

@@ -75,16 +75,18 @@
     } catch { return null; }
   }
 
-  function extractPrintableStrings(buffer, maxCount = 120, maxLen = 2000) {
+  function extractPrintableStrings(buffer, maxCount = 200, maxLen = 4000, opts = {}) {
     try {
       const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+      const minLen = opts.minLen || 4;
+      const perStringMax = opts.perStringMax || 200;
       const out = [];
       let cur = [];
       const flush = () => {
-        if (cur.length >= 4) {
-          let s = cur.join('');
-          if (s.length > 200) s = s.slice(0, 200) + '…';
-          out.push(s);
+        if (cur.length >= minLen) {
+          let str = cur.join('');
+          if (str.length > perStringMax) str = str.slice(0, perStringMax) + '…';
+          out.push(str);
         }
         cur = [];
       };
@@ -96,7 +98,10 @@
         else flush();
       }
       flush();
-      let joined = out.join('\n');
+      const seen = new Set();
+      const uniq = [];
+      for (const str of out) { const k = String(str).trim(); if (!k || seen.has(k)) continue; seen.add(k); uniq.push(k); }
+      let joined = uniq.join('\n');
       if (joined.length > maxLen) joined = joined.slice(0, maxLen) + '\n…';
       return joined;
     } catch { return ''; }
@@ -108,6 +113,160 @@
       const slice = bytes.slice(0, Math.min(n, bytes.length));
       return Array.from(slice).map(b => b.toString(16).padStart(2, '0')).join(' ');
     } catch { return ''; }
+  }
+
+  function readAscii(bytes, offset, len) {
+    let out = '';
+    const end = Math.min(bytes.length, offset + len);
+    for (let i = Math.max(0, offset); i < end; i++) {
+      const b = bytes[i];
+      if (b === 0) break;
+      out += (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.';
+    }
+    return out;
+  }
+  function u16(bytes, off) { return (off + 1 < bytes.length) ? (bytes[off] | (bytes[off + 1] << 8)) : 0; }
+  function u32(bytes, off) { return (off + 3 < bytes.length) ? ((bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) | (bytes[off + 3] << 24)) >>> 0) : 0; }
+
+  function summarizeBinaryBuffer(buffer, meta = {}) {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+    const name = meta.name || 'file';
+    const mime = meta.mime || 'application/octet-stream';
+    const size = (meta.size != null ? meta.size : bytes.length) || 0;
+    const hash = meta.hash || null;
+    const header = meta.headerHex || headerHex(bytes, 64);
+    const lines = [];
+    lines.push(`[Binary file: ${name}]`);
+    lines.push(`MIME: ${mime}`);
+    lines.push(`Size: ${size} bytes (${fmtBytes(size)})`);
+    lines.push(`SHA-256: ${hash || '(unavailable)'}`);
+    if (header) lines.push(`Header bytes (hex): ${header}`);
+
+    // PE / EXE summary (best-effort, bounded)
+    if (bytes.length >= 64 && bytes[0] === 0x4D && bytes[1] === 0x5A) {
+      const peOff = u32(bytes, 60);
+      lines.push('');
+      lines.push('PE Header (summary):');
+      lines.push('- DOS signature: MZ');
+      lines.push(`- PE header offset: 0x${peOff.toString(16)}`);
+      if (peOff > 0 && peOff + 24 < bytes.length && bytes[peOff] === 0x50 && bytes[peOff+1] === 0x45 && bytes[peOff+2] === 0 && bytes[peOff+3] === 0) {
+        const coff = peOff + 4;
+        const machine = u16(bytes, coff);
+        const numSections = u16(bytes, coff + 2);
+        const timeDate = u32(bytes, coff + 4);
+        const optSize = u16(bytes, coff + 16);
+        const characteristics = u16(bytes, coff + 18);
+        const machineMap = { 0x014c: 'x86 (I386)', 0x8664: 'x64 (AMD64)', 0x01c0: 'ARM', 0xaa64: 'ARM64', 0x0200: 'IA64' };
+        lines.push('- Signature: PE\0\0');
+        lines.push(`- Machine: ${machineMap[machine] || ('0x' + machine.toString(16))}`);
+        lines.push(`- Sections: ${numSections}`);
+        lines.push(`- Timestamp: ${timeDate ? new Date(timeDate * 1000).toISOString() : '0'}`);
+        lines.push(`- Characteristics: 0x${characteristics.toString(16)}`);
+        const optOff = coff + 20;
+        if (optOff + 2 <= bytes.length) {
+          const magic = u16(bytes, optOff);
+          const isPE32Plus = magic === 0x20b;
+          const isPE32 = magic === 0x10b;
+          if (isPE32 || isPE32Plus) {
+            lines.push(`- Optional header: ${isPE32Plus ? 'PE32+ (64-bit)' : 'PE32 (32-bit)'}`);
+            const ddCountOff = optOff + (isPE32Plus ? 108 : 92);
+            const ddOff = optOff + (isPE32Plus ? 112 : 96);
+            const ddCount = (ddCountOff + 4 <= bytes.length) ? u32(bytes, ddCountOff) : 0;
+            const secOff = optOff + optSize;
+            const rvaToOff = (rva) => {
+              if (!rva) return 0;
+              for (let i = 0; i < Math.min(numSections, 96); i++) {
+                const so = secOff + i * 40;
+                if (so + 40 > bytes.length) break;
+                const va = u32(bytes, so + 12);
+                const rawSize = u32(bytes, so + 16);
+                const rawPtr = u32(bytes, so + 20);
+                const vsize = u32(bytes, so + 8) || rawSize;
+                if (rva >= va && rva < va + vsize) return rawPtr + (rva - va);
+              }
+              return rva;
+            };
+            // Sections
+            lines.push('');
+            lines.push('Sections:');
+            const maxSecs = Math.min(numSections, 16);
+            for (let i = 0; i < maxSecs; i++) {
+              const so = secOff + i * 40;
+              if (so + 40 > bytes.length) break;
+              let secName = '';
+              for (let j = 0; j < 8; j++) { const b = bytes[so + j]; if (!b) break; secName += (b >= 32 && b <= 126) ? String.fromCharCode(b) : ''; }
+              const vsize = u32(bytes, so + 8);
+              const va = u32(bytes, so + 12);
+              const rawSize = u32(bytes, so + 16);
+              const rawPtr = u32(bytes, so + 20);
+              const ch = u32(bytes, so + 36);
+              lines.push(`- ${secName || '(noname)'} | vsize=0x${vsize.toString(16)} va=0x${va.toString(16)} raw=0x${rawSize.toString(16)} ptr=0x${rawPtr.toString(16)} flags=0x${ch.toString(16)}`);
+            }
+            if (numSections > maxSecs) lines.push(`- … (${numSections - maxSecs} more sections)`);
+
+            // Imports (DLL names)
+            if (ddCount >= 2 && ddOff + 16 <= bytes.length) {
+              const impRva = u32(bytes, ddOff + 8);
+              const impSize = u32(bytes, ddOff + 12);
+              if (impRva && impSize) {
+                const imports = [];
+                let idOff = rvaToOff(impRva);
+                for (let n = 0; n < 64 && idOff + 20 <= bytes.length; n++, idOff += 20) {
+                  const nameRva = u32(bytes, idOff + 12);
+                  const origFirstThunk = u32(bytes, idOff);
+                  const firstThunk = u32(bytes, idOff + 16);
+                  if (!nameRva && !origFirstThunk && !firstThunk) break;
+                  const nameOff = rvaToOff(nameRva);
+                  if (!nameOff || nameOff <= 0 || nameOff >= bytes.length) continue;
+                  let dll = '';
+                  for (let j = 0; j < 128 && nameOff + j < bytes.length; j++) {
+                    const b = bytes[nameOff + j];
+                    if (!b) break;
+                    if (b >= 32 && b <= 126) dll += String.fromCharCode(b); else { dll = ''; break; }
+                  }
+                  if (dll) imports.push(dll);
+                }
+                if (imports.length) {
+                  lines.push('');
+                  lines.push('Imports (DLLs):');
+                  const uniqImports = Array.from(new Set(imports));
+                  const show = uniqImports.slice(0, 60);
+                  for (const dll of show) lines.push(`- ${dll}`);
+                  if (uniqImports.length > show.length) lines.push(`- … (${uniqImports.length - show.length} more)`);
+                }
+              }
+            }
+          } else {
+            lines.push(`- Optional header magic: 0x${magic.toString(16)} (unknown)`);
+          }
+        }
+      } else {
+        lines.push('- PE signature not found at offset (truncated or non-PE)');
+      }
+    }
+
+    // Printable strings sample (top 150 unique), capped contribution
+    lines.push('');
+    lines.push('Printable strings (top 150 unique, sampled):');
+    const strings = extractPrintableStrings(bytes, 300, 3500, { minLen: 4, perStringMax: 120 });
+    if (strings) {
+      const strLines = strings.split('\n').filter(Boolean).slice(0, 150);
+      for (const str of strLines) lines.push(`- ${str}`);
+    } else {
+      lines.push('- (none)');
+    }
+
+    let out = lines.join('\n');
+    // hard cap: never dump raw megabytes into prompt
+    const MAX = 8000;
+    if (out.length > MAX) out = out.slice(0, MAX) + '\n…(binary context truncated to 8000 chars)';
+    return out;
+  }
+
+  function capBinaryContext(text, max = 8000) {
+    const s = String(text || '');
+    if (s.length <= max) return s;
+    return s.slice(0, max) + '\n…(binary context truncated to 8000 chars)';
   }
 
   function sanitizePath(p) {
@@ -315,10 +474,10 @@
             const ab = await entry.async('arraybuffer');
             const u8 = new Uint8Array(ab);
             const hash = await sha256Hex(ab);
-            const strings = extractPrintableStrings(u8, 60, 800);
             const header = headerHex(u8, 64);
-            const label = `[Binary file extracted from ${ctx.name}]\nPath: ${entryPath}\nMIME: (unknown)\nSize: ${ab.byteLength} bytes\nSHA-256: ${hash || '(unavailable)'}\nHeader bytes: ${header}\n\n--- Printable strings (sample) ---\n${strings || '(none)'}`;
-            const saved = addFileToWorkspace(entryPath, label, { dirty: false, binary: true, meta: { size: ab.byteLength, mime: '', fromZip: ctx.name, arrayBuffer: ab, hash, stringsPreview: strings, headerHex: header } });
+            const summary = capBinaryContext(summarizeBinaryBuffer(ab, { name: entryPath, mime: '', size: ab.byteLength, hash, headerHex: header }), 8000);
+            const stringsPreview = extractPrintableStrings(u8, 150, 1500, { minLen: 4, perStringMax: 120 });
+            const saved = addFileToWorkspace(entryPath, summary, { dirty: false, binary: true, meta: { size: ab.byteLength, mime: '', fromZip: ctx.name, arrayBuffer: ab, hash, stringsPreview, headerHex: header, summary } });
             if (saved) extractedPaths.push(saved);
           }
         } catch (e) {
@@ -335,14 +494,16 @@
       const buf = await readAsArrayBuffer(file);
       const u8 = new Uint8Array(buf);
       const hash = await sha256Hex(buf);
-      const strings = extractPrintableStrings(u8, 120, 1500);
       const header = headerHex(u8, 64);
-      const path = addFileToWorkspace(ctx.basePath, `[Binary file: ${ctx.name}]\nMIME: ${ctx.mime || 'unknown'}\nSize: ${ctx.size} bytes\nSHA-256: ${hash || '(unavailable)'}\nHeader bytes: ${header}\n\n--- Printable strings / header sample ---\n${strings || '(none)'}`, {
+      // Capped summary (<= 8000 chars): PE header/sections/imports + top 150 unique printable strings; never dump raw bytes
+      const summary = capBinaryContext(summarizeBinaryBuffer(buf, { name: ctx.name, mime: ctx.mime || 'application/octet-stream', size: ctx.size, hash, headerHex: header }), 8000);
+      const stringsPreview = extractPrintableStrings(u8, 150, 1500, { minLen: 4, perStringMax: 120 });
+      const path = addFileToWorkspace(ctx.basePath, summary, {
         dirty: false,
         binary: true,
-        meta: { size: ctx.size, mime: ctx.mime, arrayBuffer: buf, hash, stringsPreview: strings, headerHex: header }
+        meta: { size: ctx.size, mime: ctx.mime, arrayBuffer: buf, hash, stringsPreview, headerHex: header, summary }
       });
-      // Make available to Binary analyzer tab
+      // Make available to Binary analyzer tab (File wrapper; ArrayBuffer stored in workspace)
       try {
         if (window.BinaryInspector && typeof BinaryInspector.setFile === 'function') {
           const f = new File([buf], ctx.name, { type: ctx.mime || 'application/octet-stream' });
@@ -351,7 +512,7 @@
       } catch {}
       const attachment = ctx.attachToChat ? {
         id: uid('att'), kind: 'binary', name: ctx.name, path, size: ctx.size, mime: ctx.mime || 'application/octet-stream',
-        hash, stringsPreview: strings, headerHex: header
+        hash, headerHex: header, summary
       } : null;
       return { path, attachment };
     },
@@ -372,12 +533,18 @@
           parts.push(`\n[Zip archive: ${a.name} | ${fmtBytes(a.size||0)} | extracted ${paths.length} file(s) into workspace]`);
           if (paths.length) parts.push(paths.slice(0, 300).map(p => `- ${p}`).join('\n'));
         } else if (a.kind === 'binary') {
-          parts.push(`\n[Binary/Document file: ${a.name}${a.path ? ' (' + a.path + ')' : ''}]`);
-          parts.push(`MIME: ${a.mime || 'unknown'}`);
-          parts.push(`Size: ${a.size || 0} bytes (${fmtBytes(a.size || 0)})`);
-          parts.push(`SHA-256: ${a.hash || '(unavailable)'}`);
-          if (a.headerHex) parts.push(`Header bytes (hex): ${a.headerHex}`);
-          if (a.stringsPreview) parts.push(`Printable strings (sample):\n${a.stringsPreview}`);
+          // Capped to 8000 chars total per binary to avoid oversized LLM payloads (e.g. 30MB+ exe)
+          const summary = capBinaryContext(a.summary || a.text || '', 8000);
+          if (summary) {
+            parts.push('\n' + summary);
+          } else {
+            parts.push(`\n[Binary/Document file: ${a.name}${a.path ? ' (' + a.path + ')' : ''}]`);
+            parts.push(`MIME: ${a.mime || 'unknown'}`);
+            parts.push(`Size: ${a.size || 0} bytes (${fmtBytes(a.size || 0)})`);
+            parts.push(`SHA-256: ${a.hash || '(unavailable)'}`);
+            if (a.headerHex) parts.push(`Header bytes (hex): ${a.headerHex}`);
+            if (a.stringsPreview) parts.push(capBinaryContext('Printable strings (sample):\n' + String(a.stringsPreview), 2000));
+          }
         } else if (a.kind === 'image') {
           parts.push(`\n[Image attachment: ${a.name} | ${fmtBytes(a.size||0)} | ${a.mime||'image/*'}] (image provided as vision input)`);
         } else {
@@ -388,5 +555,9 @@
     }
   };
 
+  // helpers exposed for other modules
+  Workspace.summarizeBinaryBuffer = summarizeBinaryBuffer;
+  Workspace.capBinaryContext = capBinaryContext;
+  Workspace.extractPrintableStrings = extractPrintableStrings;
   window.Workspace = Workspace;
 })();
