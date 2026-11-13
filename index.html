@@ -219,7 +219,7 @@
                   <span id="terminalStatus" class="badge badge-success capitalize">browser</span>
                 </div>
                 <div class="flex items-center gap-1.5 flex-wrap justify-end">
-                  <input id="terminalWsUrl" class="input input-compact w-48 md:w-64 font-mono text-[10px]" placeholder="ws://... (optional remote shell)" aria-label="Remote terminal bridge WebSocket URL" />
+                  <input id="terminalWsUrl" class="input input-compact w-48 md:w-64 font-mono text-[10px]" placeholder="ws://... or https://... (remote runner)" aria-label="Remote terminal / runner URL" />
                   <button id="btnTerminalConnect" class="btn-secondary btn-xs">Connect Remote</button>
                   <button id="btnTerminalClear" class="btn-secondary btn-xs">Clear</button>
                 </div>
@@ -433,7 +433,7 @@
 
           <section class="card-surface p-4 space-y-3">
             <div class="text-sm font-medium text-slate-200">Runtime & Bridges</div>
-            <div class="space-y-1"><label class="field-label" for="settingTerminalWs">Terminal bridge WebSocket URL</label><input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal" /></div>
+            <div class="space-y-1"><label class="field-label" for="settingTerminalWs">Remote Terminal / Runner URL</label><input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal or https://.../exec" /></div>
             <div class="space-y-1"><label class="field-label" for="settingWebhookUrl">External webhook / automation URL <span class="text-slate-600">(optional)</span></label><input id="settingWebhookUrl" class="input font-mono text-xs" placeholder="https://example.com/webhook" /></div>
             <div class="space-y-1"><label class="field-label" for="settingGithubToken">GitHub token <span class="text-slate-600">(optional)</span></label><input id="settingGithubToken" type="password" class="input font-mono text-xs" placeholder="ghp_..." /></div>
             <p class="text-[11px] text-slate-500">Settings persist in local browser storage on this device.</p>

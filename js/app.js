@@ -193,13 +193,44 @@
       if (cancel) cancel.addEventListener('click', () => this.closeSettings());
       document.getElementById('settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') this.closeSettings(); });
       document.getElementById('btnSaveSettings').addEventListener('click', () => {
-        AppState.settings.systemPrompt = document.getElementById('settingSystemPrompt').value;
+        // Agent / RAG / runtime settings
+        AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt').value || '');
         AppState.settings.ragK = Number(document.getElementById('settingRagK').value || 6);
-        AppState.settings.terminalWs = document.getElementById('settingTerminalWs').value.trim();
-        AppState.settings.webhookUrl = document.getElementById('settingWebhookUrl').value.trim();
-        AppState.settings.githubToken = document.getElementById('settingGithubToken').value.trim();
+        const terminalUrl = (document.getElementById('settingTerminalWs').value || '').trim();
+        AppState.settings.terminalWs = terminalUrl;
+        AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl').value || '').trim();
+        AppState.settings.githubToken = (document.getElementById('settingGithubToken').value || '').trim();
         AppState.saveSettings();
-        document.getElementById('terminalWsUrl').value = AppState.settings.terminalWs || '';
+
+        // Persist MCP Servers configuration from Settings modal so Save Settings does not revert it
+        try {
+          const mcpInput = document.getElementById('mcpConfigInput');
+          if (mcpInput && window.MCP && typeof MCP.saveConfigFromUI === 'function') {
+            MCP.saveConfigFromUI();
+          } else if (mcpInput && window.Utils && Utils.safeJsonParse) {
+            const parsed = Utils.safeJsonParse(mcpInput.value, null);
+            if (Array.isArray(parsed)) {
+              AppState.mcpServers = parsed;
+              if (AppState.saveMcp) AppState.saveMcp();
+            }
+          }
+        } catch (e) {
+          // Keep other settings saved; surface MCP config issues without reverting Runner URL
+          if (window.Utils && Utils.toast) Utils.toast(`MCP config not saved: ${e.message}`, 'error');
+        }
+
+        // Keep terminal/runner UI and active state in sync with persisted URL
+        const tws = document.getElementById('terminalWsUrl');
+        if (tws) tws.value = terminalUrl;
+        if (window.TerminalPanel) {
+          TerminalPanel.remoteUrl = terminalUrl;
+          if (typeof TerminalPanel.applyRunnerConfig === 'function') {
+            TerminalPanel.applyRunnerConfig(terminalUrl, { silent: true });
+          } else if (typeof TerminalPanel.disconnect === 'function' && !terminalUrl) {
+            TerminalPanel.disconnect(true);
+          }
+        }
+
         this.closeSettings();
         Utils.toast('Settings saved', 'success');
       });
@@ -275,11 +306,31 @@
     },
 
     restoreSettingsUI() {
-      document.getElementById('settingSystemPrompt').value = AppState.settings.systemPrompt || '';
-      document.getElementById('settingRagK').value = AppState.settings.ragK || 6;
-      document.getElementById('settingTerminalWs').value = AppState.settings.terminalWs || '';
-      document.getElementById('settingWebhookUrl').value = AppState.settings.webhookUrl || '';
-      document.getElementById('settingGithubToken').value = AppState.settings.githubToken || '';
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+      setVal('settingSystemPrompt', s.systemPrompt || '');
+      setVal('settingRagK', s.ragK || 6);
+      setVal('settingTerminalWs', s.terminalWs || '');
+      setVal('settingWebhookUrl', s.webhookUrl || '');
+      setVal('settingGithubToken', s.githubToken || '');
+
+      // Restore MCP Servers configuration so Settings modal reflects persisted state
+      const mcpInput = document.getElementById('mcpConfigInput');
+      if (mcpInput) {
+        const servers = (window.AppState && Array.isArray(AppState.mcpServers)) ? AppState.mcpServers : [];
+        const fallback = servers.length ? servers : [{ name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }];
+        try { mcpInput.value = JSON.stringify(servers.length ? servers : fallback, null, 2); } catch { mcpInput.value = '[]'; }
+      }
+
+      // Keep header/runner input in sync
+      const tws = document.getElementById('terminalWsUrl');
+      if (tws) tws.value = s.terminalWs || '';
+      // Apply saved remote runner to active TerminalPanel so restored state is active
+      try {
+        if (window.TerminalPanel && typeof TerminalPanel.applyRunnerConfig === 'function') {
+          TerminalPanel.applyRunnerConfig(s.terminalWs || '', { silent: true });
+        }
+      } catch {}
     },
 
     openSettings() {

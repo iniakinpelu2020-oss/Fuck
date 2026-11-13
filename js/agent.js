@@ -301,15 +301,108 @@
       return { 'Content-Type': 'application/json', ...(key ? { 'Authorization': `Bearer ${key}` } : {}) };
     },
 
-    buildRequestBody(provider, model, system, userContent, opts = {}) {
-      if (provider === 'anthropic') {
-        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
-        if (model) body.model = model; else body.model = 'claude-3-5-sonnet-latest';
-        return body; // Anthropic streaming protocol differs; keep non-streaming for compatibility
+    // --- LLM tool-calling (OpenAI-compatible) & MCP tool schema ---
+    getMcpToolSpecs() {
+      const specs = [];
+      if (!(window.MCP && typeof MCP.getAllTools === 'function')) return specs;
+      const tools = MCP.getAllTools() || [];
+      for (const t of tools) {
+        const server = String(t.server || '').trim();
+        const name = String(t.name || t.id || '').trim();
+        if (!server || !name) continue;
+        const prefixed = `mcp__${server}__${name}`;
+        const desc = String(t.description || `MCP tool ${name} on server ${server}`).slice(0, 500);
+        let params = t.inputSchema || t.parameters || t.input_schema || t.schema || { type: 'object', properties: {} };
+        // Ensure valid JSON schema object for OpenAI tools
+        if (!params || typeof params !== 'object' || Array.isArray(params)) params = { type: 'object', properties: {} };
+        if (!params.type) params = { ...params, type: 'object' };
+        if (params.type === 'object' && !params.properties) params = { ...params, properties: {} };
+        specs.push({
+          type: 'function',
+          function: {
+            name: prefixed,
+            description: desc,
+            parameters: params
+          },
+          _mcp: { server, tool: name }
+        });
       }
-      const body = { temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
-      if (model) body.model = model; // omit when empty so /api/chat uses server APEX_DEFAULT_MODEL
+      return specs;
+    },
+
+    getBuiltinToolSpecs() {
+      // Expose remote/local shell as a callable tool so LLM can request execution via tool_calls
+      return [{
+        type: 'function',
+        function: {
+          name: 'run_shell',
+          description: 'Execute a terminal/shell command in the configured Remote Runner (if set) or in the browser sandbox. Returns command output.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: 'Shell command to execute' }
+            },
+            required: ['command']
+          }
+        },
+        _builtin: { name: 'run_shell' }
+      }];
+    },
+
+    getLlmTools() {
+      const tools = [];
+      // Dynamic MCP tools from enabled/discovered servers
+      tools.push(...this.getMcpToolSpecs());
+      // Built-in shell tool
+      tools.push(...this.getBuiltinToolSpecs());
+      return tools;
+    },
+
+    parseMcpPrefixedToolName(name) {
+      const s = String(name || '');
+      const m = s.match(/^mcp__(.+?)__(.+)$/);
+      if (!m) return null;
+      return { server: m[1], tool: m[2] };
+    },
+
+    normalizeToolCallArgs(rawArgs) {
+      if (rawArgs == null) return {};
+      if (typeof rawArgs === 'object') return Array.isArray(rawArgs) ? { value: rawArgs } : rawArgs;
+      if (typeof rawArgs === 'string') {
+        const s = rawArgs.trim();
+        if (!s) return {};
+        const parsed = Utils.safeJsonParse(s, null);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+        if (parsed != null) return { value: parsed };
+        return { raw: s };
+      }
+      return { value: rawArgs };
+    },
+
+    buildRequestBody(provider, model, system, userContentOrMessages, opts = {}) {
+      // Accepts a plain prompt string (legacy) or a full messages array (native tool loop)
+      if (provider === 'anthropic') {
+        const content = Array.isArray(userContentOrMessages)
+          ? String((userContentOrMessages[userContentOrMessages.length - 1] || {}).content || '')
+          : String(userContentOrMessages || '');
+        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content }] };
+        body.model = model || 'claude-3-5-sonnet-latest';
+        return body; // Anthropic streaming/tool protocol differs; keep simple for compatibility
+      }
+      const messages = Array.isArray(userContentOrMessages)
+        ? userContentOrMessages
+        : [
+            { role: 'system', content: String(system || '') },
+            { role: 'user', content: String(userContentOrMessages || '') }
+          ];
+      const body = { temperature: 0.2, messages };
+      if (model) body.model = model; // omit when empty so /api/chat can apply server default
       if (opts.stream) body.stream = true;
+      if (Array.isArray(opts.tools) && opts.tools.length) {
+        // strip internal metadata before sending
+        body.tools = opts.tools.map(t => ({ type: t.type || 'function', function: t.function }));
+        if (opts.tool_choice) body.tool_choice = opts.tool_choice;
+      }
       return body;
     },
 
@@ -330,10 +423,12 @@
 
     async readSSEStream(res, onDelta) {
       const reader = res.body && res.body.getReader ? res.body.getReader() : null;
-      if (!reader) return (await res.text().catch(() => '')) || '';
+      if (!reader) return { text: (await res.text().catch(() => '')) || '', toolCalls: [] };
       const decoder = new TextDecoder();
       let buffer = '';
       let full = '';
+      const toolCallsMap = new Map(); // index -> {id,type,function:{name,arguments}}
+
       const flush = (line) => {
         const s = line.replace(/\r$/, '');
         if (!s.startsWith('data:')) return;
@@ -344,16 +439,33 @@
         let delta = '';
         const choice = obj && obj.choices && obj.choices[0];
         if (choice) {
-          const d = choice.delta;
-          if (d && typeof d.content === 'string') delta = d.content;
-          else if (d && Array.isArray(d.content)) delta = d.content.map(p => (typeof p === 'string' ? p : (p && (p.text || p.content)) || '')).join('');
+          const d = choice.delta || {};
+          // content delta
+          if (typeof d.content === 'string') delta = d.content;
+          else if (Array.isArray(d.content)) delta = d.content.map(p => (typeof p === 'string' ? p : (p && (p.text || p.content)) || '')).join('');
           else if (choice.message && typeof choice.message.content === 'string' && !full) delta = choice.message.content;
           else if (typeof choice.text === 'string') delta = choice.text;
+
+          // tool_calls delta (OpenAI streaming)
+          if (Array.isArray(d.tool_calls)) {
+            for (const tc of d.tool_calls) {
+              const idx = (tc && tc.index != null) ? Number(tc.index) : toolCallsMap.size;
+              const cur = toolCallsMap.get(idx) || { id: tc.id || `call_${idx}`, type: tc.type || 'function', function: { name: '', arguments: '' } };
+              if (tc.id) cur.id = tc.id;
+              if (tc.type) cur.type = tc.type;
+              if (tc.function) {
+                if (tc.function.name) cur.function.name = (cur.function.name || '') + tc.function.name;
+                if (tc.function.arguments) cur.function.arguments = (cur.function.arguments || '') + tc.function.arguments;
+              }
+              toolCallsMap.set(idx, cur);
+            }
+          }
         }
         if (!delta && typeof obj?.delta === 'string') delta = obj.delta;
         if (!delta && typeof obj?.content === 'string') delta = obj.content;
         if (delta) { full += delta; if (onDelta) onDelta(delta, full); }
       };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -363,10 +475,12 @@
         for (const line of lines) { if (line.trim()) flush(line); }
       }
       if (buffer.trim()) flush(buffer);
-      return full;
+
+      const toolCalls = Array.from(toolCallsMap.entries()).sort((a,b)=>a[0]-b[0]).map(([_, v]) => v).filter(tc => tc && tc.function && tc.function.name);
+      return { text: full, toolCalls };
     },
 
-    async callLLM(promptText, opts = {}) {
+    async callLLM(promptTextOrMessages, opts = {}) {
       this.persistAgentSettings();
       const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
       const model = ((document.getElementById('agentModel') || {}).value || '').trim();
@@ -378,12 +492,13 @@
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
-      const wantStream = opts.stream !== false && provider !== 'anthropic';
+      const wantStream = opts.stream !== false && provider !== 'anthropic' && !opts.disableStream;
       let lastError = null;
+
       for (let attempt = 0; attempt < total; attempt++) {
         const idx = customKeys.length ? (AppState.apiKeyIndex + attempt) % total : 0;
         const key = keys[idx];
-        const body = this.buildRequestBody(provider, model, system, promptText, { stream: wantStream });
+        const body = this.buildRequestBody(provider, model, system, promptTextOrMessages, { stream: wantStream, tools: opts.tools, tool_choice: opts.tool_choice });
         const headers = this.getHeaders(provider, key);
         try {
           const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -400,17 +515,17 @@
           if (wantStream && ct.includes('text/event-stream') && res.body) {
             if (customKeys.length) AppState.apiKeyIndex = idx;
             this.updateKeyStatus();
-            const full = await this.readSSEStream(res, opts.onDelta);
-            if (opts.onDelta && full) { /* streamed live */ }
-            return full;
+            const out = await this.readSSEStream(res, opts.onDelta);
+            return { text: out.text || '', toolCalls: out.toolCalls || [], raw: null };
           }
           // Non-streaming JSON fallback
           const data = await res.json().catch(async () => ({ raw: await res.text().catch(() => '') }));
           if (customKeys.length) AppState.apiKeyIndex = idx;
           this.updateKeyStatus();
           const text = this.extractAssistantText(provider, data);
+          const toolCalls = Array.isArray(data?.choices?.[0]?.message?.tool_calls) ? data.choices[0].message.tool_calls : [];
           if (opts.onDelta && text) opts.onDelta(text, text);
-          return text;
+          return { text: text || '', toolCalls, raw: data };
         } catch (e) {
           lastError = e;
           if (attempt === total - 1) break;
@@ -528,6 +643,9 @@
       const toolNotes = [];
       let extraContext = '';
       let ragMeta = '';
+      const execSummary = [];
+      const cmdResults = [];
+      let nativeToolCallsAccum = [];
 
       // 1) Unified autonomous tool routing (pre-LLM): web search, binary context, n8n, MCP, RAG
       const wantsSearch = this.shouldSearch(prompt);
@@ -564,7 +682,6 @@
             this.updateStatusPill(pill, `🧪 Binary analysis failed: ${e.message}`, 'error');
           }
         } else if (binText) {
-          // already parsed/loaded - make available to agent automatically
           toolNotes.push(`Binary context: ${(BinaryInspector.lastAnalysis && BinaryInspector.lastAnalysis.name) || (BinaryInspector.selectedFile && BinaryInspector.selectedFile.name) || 'loaded'}`);
         }
         if (binText) {
@@ -587,10 +704,14 @@
         }
       }
 
-      // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions
+      // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions (context + dynamic tool schema)
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
+      const llmTools = (typeof this.getLlmTools === 'function') ? this.getLlmTools() : [];
       if (mcpTools.length) {
-        contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');
+        contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id} (function tool name: mcp__${t.server}__${t.name || t.id})${t.description ? ' - ' + t.description : ''}`).join('\n');
+      }
+      if (llmTools.length) {
+        contextBlock += `\n\n--- Available Function Tools (LLM schema) ---\n` + llmTools.map(t => `- ${(t.function && t.function.name) || t.name || '(unnamed)'}`).join('\n');
       }
 
       // RAG: auto-retrieved snippets
@@ -602,15 +723,104 @@
       }
 
       contextBlock += extraContext;
-      const payload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+      const system = AppState.settings.systemPrompt || '';
+      const userPayload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
 
-      // 2) Stream response live (bubble already shows immediate "Thinking...")
+      // 2) LLM call with dynamic MCP tool schema; handle tool_calls loop (routed to MCP JSON-RPC tools/call)
       let answer = '';
       try {
-        answer = await this.callLLM(payload, {
-          stream: true,
-          onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
-        });
+        const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
+        if (provider === 'openai-compatible' && llmTools.length) {
+          let messages = [
+            { role: 'system', content: system },
+            { role: 'user', content: userPayload }
+          ];
+          const maxRounds = 4;
+          for (let round = 0; round < maxRounds; round++) {
+            const res = await this.callLLM(messages, {
+              stream: round === 0,
+              onDelta: round === 0 ? (delta) => { if (streamBubble) streamBubble.append(delta); } : undefined,
+              tools: llmTools
+            });
+            const text = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
+            const toolCalls = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
+            if (round === 0) answer = text;
+            else if (text) answer = (answer ? answer + '\n\n' : '') + text;
+
+            if (!toolCalls.length) break;
+            nativeToolCallsAccum.push(...toolCalls);
+
+            messages.push({
+              role: 'assistant',
+              content: text || '',
+              tool_calls: toolCalls.map(tc => ({
+                id: tc.id,
+                type: tc.type || 'function',
+                function: { name: tc.function && tc.function.name, arguments: tc.function && tc.function.arguments }
+              }))
+            });
+
+            for (const tc of toolCalls) {
+              const fname = tc.function && tc.function.name ? String(tc.function.name) : '';
+              const fargsRaw = tc.function ? tc.function.arguments : '{}';
+              const fargs = (typeof this.normalizeToolCallArgs === 'function')
+                ? this.normalizeToolCallArgs(fargsRaw)
+                : (Utils.safeJsonParse(fargsRaw, {}) || {});
+              let toolResultText = '';
+              try {
+                const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
+                if (mcpTarget && window.MCP && typeof MCP.callTool === 'function') {
+                  const pill = this.addStatusPill(`🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}...`, 'running');
+                  try {
+                    const result = await MCP.callTool(mcpTarget.server, mcpTarget.tool, fargs);
+                    toolResultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
+                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} completed`, 'done');
+                  } catch (e) {
+                    toolResultText = `Error: ${e.message || e}`;
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) failed: ${e.message || e}`);
+                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} failed`, 'error');
+                  }
+                } else if (fname === 'run_shell' || fname === 'terminal' || fname === ':terminal') {
+                  const cmd = (fargs && (fargs.command || fargs.cmd)) ? String(fargs.command || fargs.cmd) : '';
+                  if (cmd && window.TerminalPanel && typeof TerminalPanel.executeCommand === 'function') {
+                    const configured = TerminalPanel.getConfiguredUrl ? TerminalPanel.getConfiguredUrl() : '';
+                    const willRemote = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl()) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!configured;
+                    const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${cmd.slice(0,40)}` : `▶ Running: ${cmd.slice(0,40)}`, 'running');
+                    const r = await TerminalPanel.executeCommand(cmd);
+                    const ok = r && r.ok !== false;
+                    const out = String((r && (r.stdout || r.output)) || '').trim();
+                    const err = String((r && r.stderr) || '').trim();
+                    toolResultText = (out || '') + (err ? (out ? '\n[stderr]\n' : '[stderr]\n') + err : '');
+                    if (!toolResultText) toolResultText = ok ? '(no output)' : 'Command failed';
+                    const usedRemote = (r && (r.mode === 'remote' || r.mode === 'remote-http')) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
+                    cmdResults.push({ cmd, ...(r || {}), remote: usedRemote });
+                    execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmd}`);
+                    this.updateStatusPill(pill, ok ? (usedRemote ? '✓ Ran remotely' : `✓ Ran: ${cmd.slice(0,36)}`) : '✗ Command failed', ok ? 'done' : 'error');
+                  } else {
+                    toolResultText = 'Error: terminal not available or missing command';
+                  }
+                } else {
+                  toolResultText = `Unknown or unsupported tool: ${fname}`;
+                }
+              } catch (e) {
+                toolResultText = `Tool execution error: ${e.message || e}`;
+              }
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id || `call_${Math.random().toString(36).slice(2)}`,
+                content: String(toolResultText).slice(0, 12000)
+              });
+            }
+          }
+        } else {
+          const res = await this.callLLM(userPayload, {
+            stream: true,
+            onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
+          });
+          answer = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
+          nativeToolCallsAccum = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
+        }
       } catch (e) {
         if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         throw e;
@@ -618,10 +828,8 @@
       if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
       if (!answer && streamBubble) answer = streamBubble.getText();
 
-      // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n)
+      // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n) from text blocks
       const actions = this.parseAgentActions(answer || '');
-      const execSummary = [];
-      const cmdResults = [];
       let applied = [];
 
       // Workspace & Editor: apply edits, auto-open editor, RAG auto-indexes via state events
@@ -639,11 +847,12 @@
       if (actions.terminal && actions.terminal.length && window.TerminalPanel) {
         for (const t of actions.terminal) {
           if (!t?.command) continue;
-          const willRemote = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
-          const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${String(t.command).slice(0, 40)}` : `▶ Running: ${String(t.command).slice(0, 40)}`, 'running');
+          const willHttp = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
+          const willRemoteWs = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
+          const pill = this.addStatusPill((willHttp || willRemoteWs) ? `▶ Running remotely: ${String(t.command).slice(0, 40)}` : `▶ Running: ${String(t.command).slice(0, 40)}`, 'running');
           try {
             const res = await TerminalPanel.executeCommand(t.command);
-            const usedRemote = (res && res.mode === 'remote') || willRemote;
+            const usedRemote = (res && (res.mode === 'remote' || res.mode === 'remote-http')) || willRemoteWs || willHttp;
             cmdResults.push({ cmd: t.command, ...res, remote: usedRemote });
             const ok = res && res.ok !== false;
             const out = String((res && (res.stdout || res.output)) || '').trim();
@@ -653,19 +862,23 @@
             if (err) execSummary.push(`stderr: ${err.slice(0, 800)}${err.length > 800 ? '…' : ''}`);
             this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
           } catch (e) {
-            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) ? 'remote' : 'browser' });
+            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: 'browser' });
             execSummary.push(`Command error: ${t.command} — ${e.message}`);
             this.updateStatusPill(pill, `✗ Command error`, 'error');
           }
         }
       }
 
-      // MCP tool calls requested by agent
+      // MCP tool calls requested by agent in structured action blocks
       if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
         for (const call of actions.mcp) {
-          const server = call.server || call.serverName;
-          const tool = call.tool || call.name || call.toolName;
+          let server = call.server || call.serverName;
+          let tool = call.tool || call.name || call.toolName;
           const args = call.arguments || call.args || {};
+          if ((!server || !tool) && call.name) {
+            const parsed = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
+            if (parsed) { server = parsed.server; tool = parsed.tool; }
+          }
           if (!server || !tool) continue;
           const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
           try {
@@ -710,7 +923,8 @@
       }
       if (cmdResults.length) {
         const blocks = cmdResults.map(r => {
-          const head = `$ ${r.cmd}${r.remote ? '  (remote shell)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
+          const isRemote = r.remote || r.mode === 'remote' || r.mode === 'remote-http';
+          const head = `$ ${r.cmd}${isRemote ? '  (remote runner)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
           const out = String(r.stdout || r.output || '').replace(/\s+$/,'');
           const err = String(r.stderr || '').replace(/\s+$/,'');
           let b = head;
@@ -728,8 +942,9 @@
       if (streamBubble) streamBubble.finalize(display, badges);
       else this.addMessage('assistant', display, 'chat', badges);
 
-      return { text: answer || '', display, actions, execution: execSummary, tools: toolNotes, applied, cmdResults };
+      return { text: answer || '', display, actions, execution: execSummary, tools: toolNotes, applied, cmdResults, nativeToolCalls: nativeToolCallsAccum };
     }
+
   };
   window.Agent = Agent;
 })();
