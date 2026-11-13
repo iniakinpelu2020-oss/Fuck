@@ -245,11 +245,32 @@
       }
       return all;
     },
+    normalizeToolArgs(args) {
+      let a = args;
+      if (a == null) return {};
+      if (typeof a === 'string') {
+        const parsed = (window.Utils && Utils.safeJsonParse) ? Utils.safeJsonParse(a, null) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) a = { ...parsed };
+        else return { input: a };
+      }
+      if (typeof a !== 'object' || Array.isArray(a)) return {};
+      const out = { ...a };
+      const owner = out.owner != null ? String(out.owner).trim() : (out.org != null ? String(out.org).trim() : '');
+      let repo = out.repo != null ? String(out.repo).trim() : (out.repository != null ? String(out.repository).trim() : '');
+      if (owner && repo && !repo.includes('/')) {
+        repo = `${owner}/${repo}`;
+      } else if (owner && !repo) {
+        repo = owner;
+      }
+      if (repo) out.repo = repo;
+      return out;
+    },
     async callTool(serverName, toolName, args = {}) {
       const methods = ['tools/call', 'tools.call', 'callTool'];
+      const cleanArgs = this.normalizeToolArgs(args);
       let lastErr = null;
       for (const m of methods) {
-        try { return await this.rpc(serverName, m, { name: toolName, arguments: args }); }
+        try { return await this.rpc(serverName, m, { name: toolName, arguments: cleanArgs }); }
         catch (e) { lastErr = e; }
       }
       throw lastErr || new Error('Tool call failed');

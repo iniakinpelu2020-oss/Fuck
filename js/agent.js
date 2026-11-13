@@ -79,7 +79,7 @@
       s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
-        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n || obj.tool_calls || (obj.tool && (obj.arguments || obj.args)))) return '';
         // collapse other JSON blocks to a compact details element
         const trimmed = String(body || '').trim();
         if (!trimmed) return '';
@@ -96,7 +96,7 @@
       s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
-        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
+        if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n || obj.tool_calls || (obj.tool && (obj.arguments || obj.args)))) return '';
         return m; // keep non-action json visible (will render on finalize)
       });
       // hide incomplete trailing action fence during streaming so raw JSON doesn't flash
@@ -427,18 +427,101 @@
       return out;
     },
 
+    resolveMcpCall(call) {
+      if (!call || typeof call !== 'object') return null;
+      let server = call.server || call.serverName || call.mcpServer || '';
+      let tool = call.tool || call.toolName || call.name || call.tool_id || call.id || '';
+      let args = call.arguments ?? call.args ?? call.input ?? call.params ?? call.parameters ?? {};
+      if (call.function && typeof call.function === 'object') {
+        if (!tool) tool = call.function.name || call.function.tool || '';
+        const fa = call.function.arguments ?? call.function.args ?? call.function.input;
+        if (fa !== undefined && fa !== null && !(typeof args === 'object' && args && !Array.isArray(args) && Object.keys(args).length)) args = fa;
+      }
+      if (typeof tool === 'string' && tool.includes(':') && !server) {
+        const i = tool.indexOf(':');
+        server = tool.slice(0, i);
+        tool = tool.slice(i + 1);
+      } else if (typeof tool === 'string' && tool.includes('/') && !server) {
+        const i = tool.indexOf('/');
+        server = tool.slice(0, i);
+        tool = tool.slice(i + 1);
+      }
+      server = String(server || '').trim();
+      tool = String(tool || '').trim();
+      if (!server || !tool) return null;
+      if (typeof args === 'string') {
+        const parsed = Utils.safeJsonParse(args, null);
+        if (parsed && typeof parsed === 'object') args = parsed;
+      }
+      if (args == null || typeof args !== 'object' || Array.isArray(args)) args = {};
+      return { server, tool, args };
+    },
+
+    tryParseMcpTerminalCommand(command) {
+      const cmd = String(command || '').trim();
+      if (!cmd) return null;
+      const m = cmd.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
+      if (!m) return null;
+      const server = m[1];
+      const tool = m[2];
+      const rest = (m[3] || '').trim();
+      const mcp = window.MCP;
+      const knownServer = !!(mcp && ((mcp.connections && mcp.connections.has(server)) || ((AppState.mcpServers || []).some(s => s && s.name === server))));
+      if (!knownServer) return null;
+      let args = {};
+      if (rest) {
+        const parsed = Utils.safeJsonParse(rest, null);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed;
+        } else {
+          const kv = {};
+          const re = /([A-Za-z0-9_.-]+)=("([^"]*)"|'([^']*)'|([^\s]+))/g;
+          let mm; let found = false;
+          while ((mm = re.exec(rest)) !== null) { kv[mm[1]] = mm[3] ?? mm[4] ?? mm[5]; found = true; }
+          if (found) args = kv;
+          else args = { input: rest };
+        }
+      }
+      return { server, tool, args };
+    },
+
+    async executeMcpCall(call, opts = {}) {
+      const resolved = this.resolveMcpCall(call);
+      if (!resolved) return { ok: false, skipped: true, error: 'Invalid MCP tool call' };
+      const { server, tool, args } = resolved;
+      const label = `${server}:${tool}`;
+      const pill = this.addStatusPill(`🔌 MCP ${label}...`, 'running');
+      try {
+        if (!window.MCP || typeof MCP.callTool !== 'function') throw new Error('MCP client unavailable');
+        const result = await MCP.callTool(server, tool, args);
+        const resultText = this.formatN8nBody(result);
+        const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
+        this.updateStatusPill(pill, `🔌 MCP ${label} completed`, 'done');
+        return { ok: true, server, tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        this.updateStatusPill(pill, `🔌 MCP ${label} failed`, 'error');
+        return { ok: false, server, tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
+      }
+    },
+
     parseAgentActions(text) {
-      const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null };
+      const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null, tool_calls: [] };
       if (!text) return actions;
       const fences = [...text.matchAll(/```(?:json:edits|json)\s*([\s\S]*?)```/gi)];
       for (const m of fences) {
         const obj = Utils.safeJsonParse(m[1], null);
-        if (obj && (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || obj.n8n || obj.notes)) {
+        if (!obj || typeof obj !== 'object') continue;
+        if (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || Array.isArray(obj.tool_calls) || obj.n8n || obj.notes) {
           if (Array.isArray(obj.edits)) actions.edits.push(...obj.edits);
           if (Array.isArray(obj.terminal)) actions.terminal.push(...obj.terminal);
           if (Array.isArray(obj.mcp)) actions.mcp.push(...obj.mcp);
+          if (Array.isArray(obj.tool_calls)) actions.tool_calls.push(...obj.tool_calls);
           if (obj.n8n) actions.n8n = obj.n8n;
           if (obj.notes) actions.notes += (actions.notes ? '\n' : '') + obj.notes;
+        } else if (obj.tool || obj.toolName || obj.function || (obj.name && obj.arguments) || (obj.name && obj.args)) {
+          // standalone tool call action object
+          actions.mcp.push(obj);
         }
       }
       return actions;
@@ -509,7 +592,8 @@
       for (const r of (cmdResults || [])) {
         if (!r || !r.cmd) continue;
         const short = r.cmd.length > 42 ? r.cmd.slice(0, 39) + '…' : r.cmd;
-        if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
+        if (r.mode === 'mcp') badges.push(`${r.ok === false ? '✗' : '✓'} MCP: ${short}`);
+        else if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
         else if (r.remote) badges.push(`✓ Ran remotely: ${short}`);
         else badges.push(`✓ Ran: ${short}`);
       }
@@ -636,45 +720,60 @@
       }
 
       // Terminal/runner: in-browser execution engine or remote bridge; capture real stdout/stderr for agent response
-      if (actions.terminal && actions.terminal.length && window.TerminalPanel) {
+      // Intercept terminal commands in the form <serverName>:<toolName> and route them via MCP.callTool()
+      if (actions.terminal && actions.terminal.length) {
         for (const t of actions.terminal) {
           if (!t?.command) continue;
+          const cmdStr = String(t.command).trim();
+          const mcpRoute = this.tryParseMcpTerminalCommand(cmdStr);
+          if (mcpRoute && window.MCP && MCP.callTool) {
+            if (window.TerminalPanel) { TerminalPanel.ensureShown && TerminalPanel.ensureShown(); TerminalPanel.write(`$ ${cmdStr}`); }
+            const res = await this.executeMcpCall(mcpRoute, { cmd: cmdStr });
+            cmdResults.push({ cmd: cmdStr, ...res, remote: false });
+            if (res.ok) {
+              execSummary.push(`MCP ${mcpRoute.server}:${mcpRoute.tool} result: ${String(res.stdout || '').slice(0, 500)}`);
+              if (window.TerminalPanel && res.stdout) TerminalPanel.writeRaw(res.stdout + (String(res.stdout).endsWith('\n') ? '' : '\n'));
+            } else {
+              execSummary.push(`MCP ${mcpRoute.server}:${mcpRoute.tool} failed: ${res.stderr || res.error || 'unknown error'}`);
+              if (window.TerminalPanel && (res.stderr || res.error)) TerminalPanel.writeRaw('\x1b[31m' + String(res.stderr || res.error) + '\x1b[0m' + '\r\n');
+            }
+            continue;
+          }
+          if (!window.TerminalPanel) continue;
           const willRemote = TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN;
-          const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${String(t.command).slice(0, 40)}` : `▶ Running: ${String(t.command).slice(0, 40)}`, 'running');
+          const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${cmdStr.slice(0, 40)}` : `▶ Running: ${cmdStr.slice(0, 40)}`, 'running');
           try {
-            const res = await TerminalPanel.executeCommand(t.command);
+            const res = await TerminalPanel.executeCommand(cmdStr);
             const usedRemote = (res && res.mode === 'remote') || willRemote;
-            cmdResults.push({ cmd: t.command, ...res, remote: usedRemote });
+            cmdResults.push({ cmd: cmdStr, ...res, remote: usedRemote });
             const ok = res && res.ok !== false;
             const out = String((res && (res.stdout || res.output)) || '').trim();
             const err = String((res && res.stderr) || '').trim();
-            execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${t.command}`);
+            execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmdStr}`);
             if (out) execSummary.push(`stdout: ${out.slice(0, 800)}${out.length > 800 ? '…' : ''}`);
             if (err) execSummary.push(`stderr: ${err.slice(0, 800)}${err.length > 800 ? '…' : ''}`);
-            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
+            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${cmdStr.slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
           } catch (e) {
-            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) ? 'remote' : 'browser' });
-            execSummary.push(`Command error: ${t.command} — ${e.message}`);
+            cmdResults.push({ cmd: cmdStr, ok: false, stderr: e.message, stdout: '', mode: (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) ? 'remote' : 'browser' });
+            execSummary.push(`Command error: ${cmdStr} — ${e.message}`);
             this.updateStatusPill(pill, `✗ Command error`, 'error');
           }
         }
       }
 
-      // MCP tool calls requested by agent
-      if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
-        for (const call of actions.mcp) {
-          const server = call.server || call.serverName;
-          const tool = call.tool || call.name || call.toolName;
-          const args = call.arguments || call.args || {};
-          if (!server || !tool) continue;
-          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
-          try {
-            const result = await MCP.callTool(server, tool, args);
-            execSummary.push(`MCP ${server}:${tool} result: ${this.formatN8nBody(result).slice(0, 500)}`);
-            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
-          } catch (e) {
-            execSummary.push(`MCP ${server}:${tool} failed: ${e.message}`);
-            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
+      // MCP tool calls requested by agent (structured "mcp" / "tool_calls" actions, and standalone tool objects)
+      const mcpCalls = [];
+      if (Array.isArray(actions.mcp)) mcpCalls.push(...actions.mcp);
+      if (Array.isArray(actions.tool_calls)) mcpCalls.push(...actions.tool_calls);
+      if (mcpCalls.length) {
+        for (const call of mcpCalls) {
+          const res = await this.executeMcpCall(call);
+          if (res.skipped) continue;
+          cmdResults.push(res);
+          if (res.ok) {
+            execSummary.push(`MCP ${res.server}:${res.tool} result: ${String(res.stdout || '').slice(0, 500)}`);
+          } else {
+            execSummary.push(`MCP ${res.server}:${res.tool} failed: ${res.stderr || res.error || 'unknown error'}`);
           }
         }
       }
@@ -710,7 +809,9 @@
       }
       if (cmdResults.length) {
         const blocks = cmdResults.map(r => {
-          const head = `$ ${r.cmd}${r.remote ? '  (remote shell)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
+          const head = r.mode === 'mcp'
+            ? `$ ${r.cmd}  (mcp tool call)`
+            : `$ ${r.cmd}${r.remote ? '  (remote shell)' : '  (browser runner)'}${r.code != null ? ` [exit ${r.code}]` : ''}`;
           const out = String(r.stdout || r.output || '').replace(/\s+$/,'');
           const err = String(r.stderr || '').replace(/\s+$/,'');
           let b = head;
