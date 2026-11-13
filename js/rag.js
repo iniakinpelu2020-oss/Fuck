@@ -38,7 +38,6 @@
     const tokens = tokenize(text);
     const vec = Object.create(null);
     for (const t of tokens) vec[t] = (vec[t] || 0) + 1;
-    // l2 norm
     let norm = 0; for (const k in vec) norm += vec[k] * vec[k]; norm = Math.sqrt(norm) || 1;
     return { vec, norm, count: tokens.length };
   }
@@ -80,11 +79,12 @@
       this.stats = { chunks: 0, files: 0, lastIndexed: null };
       this.renderStats();
       document.getElementById('ragResults').textContent = '';
+      if (window.AppState) AppState.emit('rag:cleared');
       Utils.toast('RAG index cleared', 'success');
     },
     async indexWorkspace() {
       const files = [...AppState.files.values()].filter(f => !f.binary && Utils.isTextLike(f.path));
-      await this.clearIndex();
+      await this.clearIndexSilently();
       let chunkCount = 0;
       await withStore('readwrite', (store) => {
         for (const file of files) {
@@ -98,8 +98,13 @@
       });
       this.stats = { chunks: chunkCount, files: files.length, lastIndexed: new Date().toISOString() };
       this.renderStats();
+      if (window.AppState) AppState.emit('rag:indexed', this.stats);
       Utils.toast(`Indexed ${files.length} files / ${chunkCount} chunks`, 'success');
       return this.stats;
+    },
+    async clearIndexSilently() {
+      await withStore('readwrite', (store) => store.clear());
+      this.stats = { chunks: 0, files: 0, lastIndexed: null };
     },
     async refreshStats() {
       try {
@@ -112,7 +117,11 @@
       } catch { this.renderStats(); }
     },
     renderStats() {
-      document.getElementById('ragStats').textContent = `Chunks: ${this.stats.chunks} | Files: ${this.stats.files}${this.stats.lastIndexed ? ' | Last: ' + this.stats.lastIndexed : ''}`;
+      const el = document.getElementById('ragStats');
+      if (!el) return;
+      const last = this.stats.lastIndexed ? new Date(this.stats.lastIndexed).toLocaleString() : 'never';
+      el.textContent = `Chunks: ${this.stats.chunks} | Files: ${this.stats.files} | Last indexed: ${last}`;
+      el.className = 'badge ' + (this.stats.chunks ? 'badge-info' : 'badge-muted') + ' inline-flex';
     },
     async search(query, k = 6) {
       const q = vectorize(query || '');
@@ -122,7 +131,6 @@
       }));
       const scored = all.map(c => {
         const score = cosine(q, { vec: c.vec || {}, norm: c.norm || 1 });
-        // small keyword boost for path matches
         const boost = query && c.path.toLowerCase().includes(query.toLowerCase().split(/\s+/)[0] || '') ? 0.05 : 0;
         return { path: c.path, idx: c.idx, content: c.content, score: score + boost };
       }).filter(s => s.score > 0).sort((a,b) => b.score - a.score).slice(0, k);
@@ -134,7 +142,7 @@
       const res = await this.search(q, 10);
       const out = document.getElementById('ragResults');
       if (!res.length) { out.textContent = 'No relevant snippets found.'; return; }
-      out.textContent = res.map((r,i) => `#${i+1} score=${r.score.toFixed(4)} ${r.path} [chunk ${r.idx}]\n${r.content}\n`).join('\n---\n\n');
+      out.textContent = res.map((r,i) => `#${i+1}  score=${r.score.toFixed(4)}  ${r.path}  [chunk ${r.idx}]\n${'─'.repeat(40)}\n${r.content}\n`).join('\n');
     },
     async buildContext(query, k) {
       const limit = Number(k || AppState.settings.ragK || 6);

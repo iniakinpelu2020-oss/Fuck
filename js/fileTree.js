@@ -18,19 +18,26 @@
       const tree = this.buildTree();
       const frag = document.createDocumentFragment();
       const title = document.createElement('div');
-      title.className = 'text-xs text-gray-400 mb-2 px-1';
-      title.textContent = AppState.rootHandle ? `Local: ${AppState.workspaceName}` : `Workspace: ${AppState.workspaceName}`;
+      title.className = 'tree-title';
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:7px;height:7px;border-radius:999px;background:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,0.15);display:inline-block;';
+      const label = document.createElement('span');
+      label.textContent = AppState.rootHandle ? `Local: ${AppState.workspaceName}` : `Workspace: ${AppState.workspaceName}`;
+      title.appendChild(dot); title.appendChild(label);
       frag.appendChild(title);
       if (!tree.children.length && AppState.files.size === 0) {
         const empty = document.createElement('div');
-        empty.className = 'text-xs text-gray-500 px-1';
+        empty.className = 'text-xs text-gray-500 px-2 py-3 text-center';
         empty.textContent = 'No files yet. Open a folder or create a file.';
         frag.appendChild(empty);
       } else {
         this.renderNode(tree, frag, 0);
       }
       root.appendChild(frag);
-      document.getElementById('workspaceLabel').textContent = AppState.workspaceName || 'Workspace';
+      const ws = document.getElementById('workspaceLabel');
+      if (ws) ws.textContent = AppState.workspaceName || 'Workspace';
+      const mirror = document.getElementById('workspaceLabelMirror');
+      if (mirror) mirror.textContent = AppState.workspaceName || 'Workspace';
     },
 
     buildTree() {
@@ -56,19 +63,44 @@
       return root;
     },
 
+    iconFor(name, type) {
+      if (type === 'dir') return '▸';
+      const ext = Utils.ext(name);
+      const map = { js:'JS', mjs:'JS', cjs:'JS', ts:'TS', tsx:'TS', jsx:'JS', py:'PY', html:'HT', css:'CS', json:'{}', md:'MD', sh:'SH', yml:'YM', yaml:'YM', go:'GO', rs:'RS', txt:'TX' };
+      return map[ext] || '•';
+    },
+
     renderNode(node, container, depth) {
       for (const child of node.children) {
         const row = document.createElement('div');
         row.className = `file-node ${child.type} ${AppState.activeFilePath===child.path?'active':''}`;
-        row.style.paddingLeft = `${4 + depth * 12}px`;
-        row.textContent = `${child.type === 'dir' ? '▸ ' : '• '}${child.name}`;
-        row.title = child.path;
+        row.style.paddingLeft = `${6 + depth * 12}px`;
+        row.title = child.path || child.name;
+
+        const icon = document.createElement('span');
+        icon.className = 'file-icon';
+        icon.style.cssText = 'font-size:10px;opacity:0.85;min-width:1.15rem;display:inline-flex;align-items:center;justify-content:center;color:#818cf8;';
+        icon.textContent = this.iconFor(child.name, child.type);
+
+        const name = document.createElement('span');
+        name.className = 'file-label';
+        name.textContent = child.name;
+
+        row.appendChild(icon);
+        row.appendChild(name);
+
         if (child.type === 'file') {
+          const ext = Utils.ext(child.name) || 'file';
+          const badge = document.createElement('span');
+          badge.className = 'file-badge';
+          badge.textContent = ext.length > 4 ? ext.slice(0,4) : ext;
+          row.appendChild(badge);
           row.addEventListener('click', () => AppState.setActiveFile(child.path));
         } else {
           row.addEventListener('click', () => {
-            // simple toggle by collapsing via dataset; minimal implementation: filter render not necessary
             row.classList.toggle('collapsed');
+            const wrap = row.nextElementSibling;
+            if (wrap && wrap.classList.contains('file-indent')) wrap.classList.toggle('hidden');
           });
         }
         container.appendChild(row);
@@ -142,7 +174,6 @@
       const path = AppState.activeFilePath;
       if (!path) return Utils.toast('No active file selected', 'error');
       if (!confirm(`Delete ${path}?`)) return;
-      // local FS deletion is non-trivial across browsers; remove from workspace view.
       AppState.deletePath(path);
       AppState.emit('workspace:changed');
       Utils.toast(`Removed ${path} from workspace (local disk item not deleted)`, 'info');
@@ -161,7 +192,6 @@
           if (!silent) Utils.toast(`Saved ${file.path}`, 'success');
           return true;
         }
-        // Fallback: memory workspace or no handle - try to persist in local folder if possible
         if (AppState.rootHandle) {
           const handle = await this.ensureFileHandle(file.path);
           if (handle) {
@@ -222,7 +252,7 @@
         AppState.workspaceName = `${repo.owner}/${repo.repo}@${branch}`;
         let loaded = 0, skipped = 0;
         for (const item of blobs) {
-          if (loaded >= 250) { skipped += (blobs.length - loaded); break; } // safety cap
+          if (loaded >= 250) { skipped += (blobs.length - loaded); break; }
           if (!Utils.isTextLike(item.path) || (item.size && item.size > 200 * 1024)) { skipped++; continue; }
           status.textContent = `Fetching ${loaded + 1}/${Math.min(blobs.length,250)}: ${item.path}`;
           const contentRes = await fetch(`https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${item.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`, { headers });

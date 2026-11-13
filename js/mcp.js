@@ -1,6 +1,6 @@
 (function () {
   const MCP = {
-    connections: new Map(), // name -> {config, ws, status, tools, lastError}
+    connections: new Map(),
     init() {
       document.getElementById('btnMcpConnect').addEventListener('click', () => this.connectFromConfig());
       document.getElementById('btnMcpDiscover').addEventListener('click', () => this.discoverAll());
@@ -49,8 +49,7 @@
           ws.onerror = () => { clearTimeout(to); reject(new Error('websocket error')); };
         });
         entry.status = 'connected';
-        // optional initialize handshake
-        await this.rpc(cfg.name, 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'AetherIDE', version: '1.0' } }, 4000).catch(()=>null);
+        await this.rpc(cfg.name, 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'ApexIDE', version: '1.0' } }, 4000).catch(()=>null);
         await this.discoverTools(cfg.name).catch(()=>{});
       } catch (e) {
         entry.status = 'error';

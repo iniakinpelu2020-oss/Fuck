@@ -8,11 +8,15 @@
       this.els.activeName = document.getElementById('activeFileName');
       this.els.dirty = document.getElementById('dirtyIndicator');
       this.els.lang = document.getElementById('languageSelect');
+      this.els.langBadge = document.getElementById('languageBadge');
 
       this.els.editor.addEventListener('input', () => this.onInput());
       this.els.editor.addEventListener('scroll', () => this.syncScroll());
       this.els.editor.addEventListener('keydown', (e) => this.onKeydown(e));
-      this.els.lang.addEventListener('change', () => this.renderHighlight());
+      this.els.lang.addEventListener('change', () => {
+        if (this.els.langBadge) this.els.langBadge.textContent = this.els.lang.value || 'plaintext';
+        this.renderHighlight();
+      });
 
       AppState.subscribe((evt, payload) => {
         if (evt === 'file:active') this.loadActive();
@@ -29,13 +33,16 @@
         this.els.activeName.textContent = 'untitled.txt';
         this.els.editor.value = '';
         this.els.dirty.classList.add('hidden');
+        if (this.els.langBadge) this.els.langBadge.textContent = 'plaintext';
         this.renderLines(''); this.renderHighlight('');
         return;
       }
       this.els.activeName.textContent = file.path;
       this.els.editor.value = file.content ?? '';
       this.els.dirty.classList.toggle('hidden', !file.dirty);
-      this.els.lang.value = Utils.detectLang(file.path);
+      const lang = Utils.detectLang(file.path);
+      this.els.lang.value = lang;
+      if (this.els.langBadge) this.els.langBadge.textContent = lang;
       this.renderLines(this.els.editor.value);
       this.renderHighlight(this.els.editor.value);
       if (preserveScroll) this.els.editor.scrollTop = scrollTop;
@@ -75,7 +82,6 @@
       } catch {
         html = Utils.escapeHtml(code);
       }
-      // trailing newline alignment
       if (code.endsWith('\n')) html += '\n';
       this.els.highlight.innerHTML = `<code class="hljs language-${Utils.escapeHtml(lang)}">${html}</code>`;
       this.syncScroll();
