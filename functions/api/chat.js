@@ -24,6 +24,18 @@ function parseApiKeys(value) {
     .filter(Boolean);
 }
 
+function streamResponse(upstream) {
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      ...CORS_HEADERS,
+    },
+  });
+}
+
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -44,55 +56,90 @@ export async function onRequestPost(context) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return jsonResponse({ error: 'Request payload must be a JSON object' }, 400);
   }
-  if (!payload.model) {
-    payload.model = defaultModel;
-  }
+  if (!payload.model) payload.model = defaultModel;
+  // Low-latency generation: start streaming first tokens immediately unless explicitly set.
+  if (payload.reasoning_effort == null) payload.reasoning_effort = 'low';
+  // Enable real-time SSE streaming by default for low-latency chat UX.
+  if (payload.stream == null) payload.stream = true;
 
   const authHeader = request.headers.get('Authorization');
   const body = JSON.stringify(payload);
+  const wantStream = !!payload.stream;
   const shouldRetry = (status) => status === 429 || status === 503;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  // BYOK override: forward user-provided Authorization header as-is, with retry on 429/503.
-  if (authHeader && authHeader.trim()) {
+  async function forward(headers, maxAttempts, rotateOnAuthError) {
+    let lastResponse = null;
     let lastText = '';
-    let lastStatus = 502;
     let lastHeaders = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const upstream = await fetch(upstreamUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': authHeader.trim(),
-          },
+          headers,
           body,
         });
-        lastText = await upstream.text();
-        lastStatus = upstream.status;
-        lastHeaders = upstream.headers;
-        if (shouldRetry(upstream.status) && attempt < 2) {
+
+        if (shouldRetry(upstream.status) && attempt < maxAttempts - 1) {
+          lastResponse = upstream;
+          lastText = await upstream.text();
+          lastHeaders = upstream.headers;
           await sleep(400 * (attempt + 1));
           continue;
         }
-        return new Response(lastText, {
-          status: upstream.status,
-          headers: {
-            'Content-Type': upstream.headers.get('Content-Type') || 'application/json; charset=utf-8',
-            ...CORS_HEADERS,
-          },
-        });
+        if (rotateOnAuthError && (upstream.status === 401 || upstream.status === 403)) {
+          lastResponse = upstream;
+          lastText = await upstream.text();
+          lastHeaders = upstream.headers;
+          return { rotate: true, lastResponse, lastText, lastHeaders };
+        }
+
+        if (upstream.ok && wantStream && upstream.body) {
+          return { response: streamResponse(upstream) };
+        }
+
+        const text = await upstream.text();
+        return {
+          response: new Response(text, {
+            status: upstream.status,
+            headers: {
+              'Content-Type': upstream.headers.get('Content-Type') || 'application/json; charset=utf-8',
+              ...CORS_HEADERS,
+            },
+          }),
+        };
       } catch (err) {
         lastText = JSON.stringify({ error: 'Upstream request failed', message: String(err && err.message || err) });
-        lastStatus = 502;
-        if (attempt < 2) { await sleep(400 * (attempt + 1)); continue; }
-        return jsonResponse({ error: 'Upstream request failed', message: String(err && err.message || err) }, 502);
+        lastResponse = null;
+        lastHeaders = null;
+        if (attempt < maxAttempts - 1) {
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+        return {
+          response: jsonResponse({ error: 'Upstream request failed', message: String(err && err.message || err) }, 502),
+        };
       }
     }
-    return new Response(lastText || JSON.stringify({ error: 'Upstream request failed' }), {
-      status: lastStatus,
-      headers: { 'Content-Type': (lastHeaders && lastHeaders.get('Content-Type')) || 'application/json; charset=utf-8', ...CORS_HEADERS },
-    });
+    return {
+      response: new Response(lastText || JSON.stringify({ error: 'Upstream request failed' }), {
+        status: (lastResponse && lastResponse.status) || 502,
+        headers: {
+          'Content-Type': (lastHeaders && lastHeaders.get('Content-Type')) || 'application/json; charset=utf-8',
+          ...CORS_HEADERS,
+        },
+      }),
+    };
+  }
+
+  // BYOK override: forward user-provided Authorization header as-is, with retry on 429/503.
+  if (authHeader && authHeader.trim()) {
+    const out = await forward(
+      { 'Content-Type': 'application/json', 'Authorization': authHeader.trim() },
+      3,
+      false
+    );
+    return out.response;
   }
 
   const keys = parseApiKeys(env.APEX_API_KEYS);
@@ -102,10 +149,11 @@ export async function onRequestPost(context) {
 
   let lastResponse = null;
   let lastText = '';
+  let lastHeaders = null;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    let keyExhausted = false;
-    for (let attempt = 0; attempt < 2 && !keyExhausted; attempt++) {
+    let keyDone = false;
+    for (let attempt = 0; attempt < 2 && !keyDone; attempt++) {
       try {
         const upstream = await fetch(upstreamUrl, {
           method: 'POST',
@@ -119,18 +167,24 @@ export async function onRequestPost(context) {
         if (upstream.status === 429 || upstream.status === 503) {
           lastResponse = upstream;
           lastText = await upstream.text();
+          lastHeaders = upstream.headers;
           if (attempt < 1) {
             await sleep(500 * (attempt + 1));
             continue;
           }
-          keyExhausted = true;
-          break; // rotate to next key after retry
+          keyDone = true; // rotate to next key after retry
+          break;
         }
         if (upstream.status === 401 || upstream.status === 403) {
           lastResponse = upstream;
           lastText = await upstream.text();
-          keyExhausted = true;
-          break; // rotate to next key
+          lastHeaders = upstream.headers;
+          keyDone = true; // rotate to next key
+          break;
+        }
+
+        if (upstream.ok && wantStream && upstream.body) {
+          return streamResponse(upstream);
         }
 
         const text = await upstream.text();
@@ -143,11 +197,16 @@ export async function onRequestPost(context) {
         });
       } catch (err) {
         lastText = JSON.stringify({ error: 'Upstream request failed', message: String(err && err.message || err) });
-        if (attempt < 1) { await sleep(500 * (attempt + 1)); continue; }
+        lastResponse = null;
+        lastHeaders = null;
+        if (attempt < 1) {
+          await sleep(500 * (attempt + 1));
+          continue;
+        }
         if (i === keys.length - 1) {
           return jsonResponse({ error: 'Upstream request failed', message: String(err && err.message || err) }, 502);
         }
-        keyExhausted = true;
+        keyDone = true;
       }
     }
   }
@@ -156,7 +215,7 @@ export async function onRequestPost(context) {
     return new Response(lastText || JSON.stringify({ error: 'All server API keys exhausted' }), {
       status: lastResponse.status,
       headers: {
-        'Content-Type': lastResponse.headers.get('Content-Type') || 'application/json; charset=utf-8',
+        'Content-Type': (lastHeaders && lastHeaders.get('Content-Type')) || 'application/json; charset=utf-8',
         ...CORS_HEADERS,
       },
     });

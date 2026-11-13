@@ -346,3 +346,19 @@ header { height: 42px !important; min-height: 42px; }
   #app.agent-first[data-view="agent"] #rightPanel { display: flex !important; }
   #agentComposerWrap { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px)) !important; }
 }
+
+/* Streaming "Thinking..." pulse inside assistant bubble */
+.chat-msg.streaming .chat-content { min-height: 1.4em; }
+.thinking-inline { display: inline-flex; align-items: center; gap: 4px; color: #94a3b8; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; }
+.thinking-inline .dot {
+  width: 6px; height: 6px; border-radius: 999px; background: #60a5fa;
+  display: inline-block; animation: thinking-bounce 1.2s infinite ease-in-out both;
+}
+.thinking-inline .dot:nth-child(1) { animation-delay: -0.24s; }
+.thinking-inline .dot:nth-child(2) { animation-delay: -0.12s; }
+.thinking-inline .dot:nth-child(3) { animation-delay: 0s; }
+.thinking-inline .thinking-label { margin-left: 4px; }
+@keyframes thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.35; }
+  40% { transform: scale(1); opacity: 1; }
+}

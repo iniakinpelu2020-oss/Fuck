@@ -121,6 +121,44 @@
       if (wrap) wrap.scrollTop = wrap.scrollHeight;
     },
 
+    createStreamingAssistantBubble(meta = 'chat') {
+      const wrap = document.getElementById('chatMessages');
+      if (!wrap) return null;
+      const div = document.createElement('div');
+      div.className = 'chat-msg assistant streaming';
+      const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
+      div.innerHTML = `<div class="meta"><span class="msg-avatar msg-avatar-agent">A</span><span>Agent</span>${metaHtml}</div><pre class="chat-content"><span class="thinking-inline"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="thinking-label">Thinking...</span></span></pre>`;
+      wrap.appendChild(div);
+      wrap.scrollTop = wrap.scrollHeight;
+      const contentEl = div.querySelector('.chat-content');
+      let text = '';
+      let started = false;
+      return {
+        el: div,
+        append(delta) {
+          if (!delta) return;
+          if (!started) { started = true; contentEl.textContent = ''; }
+          text += delta;
+          contentEl.textContent = text;
+          wrap.scrollTop = wrap.scrollHeight;
+        },
+        setError(msg) {
+          text = String(msg || 'Error');
+          contentEl.textContent = text;
+          div.classList.remove('streaming');
+          wrap.scrollTop = wrap.scrollHeight;
+        },
+        getText() { return text; },
+        finalize(suffix = '') {
+          const full = text + (suffix || '');
+          contentEl.innerHTML = Agent.renderMessageContent(full);
+          div.classList.remove('streaming');
+          wrap.scrollTop = wrap.scrollHeight;
+          return full;
+        }
+      };
+    },
+
     formatN8nBody(body) {
       if (body == null) return '(no response body)';
       if (typeof body === 'string') return body || '(empty response)';
@@ -184,17 +222,22 @@
         input.value = ''; this.autoResizeChat();
         const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
         this.addMessage('user', prompt);
+        const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
         const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
         this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
+        if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
         return;
       }
       input.value = ''; this.autoResizeChat();
       this.addMessage('user', prompt);
+      // Immediate animated "Thinking..." pulse inside assistant bubble
+      const streamBubble = this.createStreamingAssistantBubble('chat');
       try {
-        await this.runPrompt(prompt, { fromUI: true });
+        await this.runPrompt(prompt, { fromUI: true, streamBubble });
       } catch (e) {
-        this.addMessage('assistant', `Error: ${e.message}`);
+        if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
+        else this.addMessage('assistant', `Error: ${e.message}`);
       }
     },
 
@@ -215,14 +258,15 @@
       return { 'Content-Type': 'application/json', ...(key ? { 'Authorization': `Bearer ${key}` } : {}) };
     },
 
-    buildRequestBody(provider, model, system, userContent) {
+    buildRequestBody(provider, model, system, userContent, opts = {}) {
       if (provider === 'anthropic') {
         const body = { max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
         if (model) body.model = model; else body.model = 'claude-3-5-sonnet-latest';
-        return body;
+        return body; // Anthropic streaming protocol differs; keep non-streaming for compatibility
       }
       const body = { temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
       if (model) body.model = model; // omit when empty so /api/chat uses server APEX_DEFAULT_MODEL
+      if (opts.stream) body.stream = true;
       return body;
     },
 
@@ -237,7 +281,49 @@
       return JSON.stringify(data, null, 2);
     },
 
-    async callWithRotation(promptText) {
+    async callWithRotation(promptText, opts = {}) {
+      return this.callLLM(promptText, opts);
+    },
+
+    async readSSEStream(res, onDelta) {
+      const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+      if (!reader) return (await res.text().catch(() => '')) || '';
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let full = '';
+      const flush = (line) => {
+        const s = line.replace(/\r$/, '');
+        if (!s.startsWith('data:')) return;
+        const data = s.slice(5).trim();
+        if (!data || data === '[DONE]') return;
+        let obj;
+        try { obj = JSON.parse(data); } catch { return; }
+        let delta = '';
+        const choice = obj && obj.choices && obj.choices[0];
+        if (choice) {
+          const d = choice.delta;
+          if (d && typeof d.content === 'string') delta = d.content;
+          else if (d && Array.isArray(d.content)) delta = d.content.map(p => (typeof p === 'string' ? p : (p && (p.text || p.content)) || '')).join('');
+          else if (choice.message && typeof choice.message.content === 'string' && !full) delta = choice.message.content;
+          else if (typeof choice.text === 'string') delta = choice.text;
+        }
+        if (!delta && typeof obj?.delta === 'string') delta = obj.delta;
+        if (!delta && typeof obj?.content === 'string') delta = obj.content;
+        if (delta) { full += delta; if (onDelta) onDelta(delta, full); }
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) { if (line.trim()) flush(line); }
+      }
+      if (buffer.trim()) flush(buffer);
+      return full;
+    },
+
+    async callLLM(promptText, opts = {}) {
       this.persistAgentSettings();
       const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
       const model = ((document.getElementById('agentModel') || {}).value || '').trim();
@@ -249,11 +335,12 @@
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
+      const wantStream = opts.stream !== false && provider !== 'anthropic';
       let lastError = null;
       for (let attempt = 0; attempt < total; attempt++) {
         const idx = customKeys.length ? (AppState.apiKeyIndex + attempt) % total : 0;
         const key = keys[idx];
-        const body = this.buildRequestBody(provider, model, system, promptText);
+        const body = this.buildRequestBody(provider, model, system, promptText, { stream: wantStream });
         const headers = this.getHeaders(provider, key);
         try {
           const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -266,10 +353,21 @@
             const t = await res.text();
             throw new Error(`${useManagedProxy ? 'Managed proxy error' : 'API error'} ${res.status}: ${t.slice(0, 500)}`);
           }
-          const data = await res.json();
+          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          if (wantStream && ct.includes('text/event-stream') && res.body) {
+            if (customKeys.length) AppState.apiKeyIndex = idx;
+            this.updateKeyStatus();
+            const full = await this.readSSEStream(res, opts.onDelta);
+            if (opts.onDelta && full) { /* streamed live */ }
+            return full;
+          }
+          // Non-streaming JSON fallback
+          const data = await res.json().catch(async () => ({ raw: await res.text().catch(() => '') }));
           if (customKeys.length) AppState.apiKeyIndex = idx;
           this.updateKeyStatus();
-          return this.extractAssistantText(provider, data);
+          const text = this.extractAssistantText(provider, data);
+          if (opts.onDelta && text) opts.onDelta(text, text);
+          return text;
         } catch (e) {
           lastError = e;
           if (attempt === total - 1) break;
@@ -425,17 +523,22 @@
       contextBlock += extraContext;
       const payload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
 
-      const pill = this.addStatusPill('✨ Thinking...', 'running');
-      let answer;
+      const streamBubble = opts.streamBubble || this.createStreamingAssistantBubble('chat');
+      let answer = '';
       try {
-        answer = await this.callWithRotation(payload);
-        this.updateStatusPill(pill, '✨ Response ready', 'done');
+        answer = await this.callLLM(payload, {
+          stream: true,
+          onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
+        });
       } catch (e) {
-        this.updateStatusPill(pill, '✨ Request failed', 'error');
+        if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
         throw e;
       }
+      // Ensure bubble shows content if non-stream fallback returned text without deltas
+      if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
+      if (!answer && streamBubble) answer = streamBubble.getText();
 
-      const actions = this.parseAgentActions(answer);
+      const actions = this.parseAgentActions(answer || '');
       const execSummary = [];
 
       if (autoApply && actions.edits.length && window.Editor) {
@@ -467,7 +570,7 @@
           if (!server || !tool) continue;
           const pill = this.addStatusPill(`🔌 Calling MCP ${server}:${tool}...`, 'running');
           try {
-            const result = await MCP.callTool(server, tool, args);
+            await MCP.callTool(server, tool, args);
             execSummary.push(`MCP ${server}:${tool} executed`);
             this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
           } catch (e) {
@@ -491,8 +594,10 @@
       if (execSummary.length) suffix += `\n[Execution] ${execSummary.join('; ')}`;
       if (toolNotes.length) suffix += `\n[Tools] ${toolNotes.join(' | ')}`;
       if (ragMeta) suffix += `\n[RAG] ${ragMeta}`;
-      this.addMessage('assistant', answer + (suffix ? `\n\n${suffix}` : ''), 'chat');
-      return { text: answer, actions, execution: execSummary, tools: toolNotes };
+      const suffixBlock = suffix ? `\n\n${suffix}` : '';
+      if (streamBubble) streamBubble.finalize(suffixBlock);
+      else this.addMessage('assistant', (answer || '') + suffixBlock, 'chat');
+      return { text: answer || '', actions, execution: execSummary, tools: toolNotes };
     }
   };
   window.Agent = Agent;
