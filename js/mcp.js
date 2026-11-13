@@ -191,12 +191,23 @@
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = setTimeout(() => { try { controller && controller.abort(); } catch {} }, timeoutMs);
       try {
-        const token = String((entry.config && (entry.config.token || entry.config.bearerToken || entry.config.authToken)) || '').trim();
+        const cfg = (entry && entry.config && typeof entry.config === 'object') ? entry.config : {};
         const headers = {
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/event-stream'
         };
+        // Optional custom headers from server config: { "headers": { "X-Api-Key": "...", ... } }
+        if (cfg.headers && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)) {
+          for (const [k, v] of Object.entries(cfg.headers)) {
+            if (v == null) continue;
+            headers[String(k)] = String(v);
+          }
+        }
+        // Optional bearer token from server config: { "token": "..." }
+        const rawToken = Object.prototype.hasOwnProperty.call(cfg, 'token') ? cfg.token : (cfg.bearerToken != null ? cfg.bearerToken : cfg.authToken);
+        const token = String(rawToken == null ? '' : rawToken).trim();
         if (token) headers['Authorization'] = 'Bearer ' + token;
+        // Pass captured MCP session id on subsequent calls (tools/list, tools/call, etc.)
         if (entry.sessionId) headers['Mcp-Session-Id'] = entry.sessionId;
         const res = await fetch(entry.config.url, {
           method: 'POST',
@@ -204,6 +215,7 @@
           body: JSON.stringify(payload),
           signal: controller ? controller.signal : undefined
         });
+        // Capture session id from initialize (and any response) for subsequent requests
         const sessionId = res.headers.get('mcp-session-id') || res.headers.get('Mcp-Session-Id');
         if (sessionId) entry.sessionId = sessionId;
 
