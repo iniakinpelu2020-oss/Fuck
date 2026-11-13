@@ -37,7 +37,7 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body class="h-full bg-base text-slate-200 overflow-hidden antialiased">
-  <div id="app" class="h-screen overflow-hidden flex flex-col bg-base">
+  <div id="app" class="h-[100dvh] min-h-0 overflow-hidden flex flex-col bg-base">
     <!-- Top Header -->
     <header class="h-[42px] shrink-0 border-b border-border bg-panel2/95 backdrop-blur flex items-center justify-between px-3 gap-2 z-30">
       <div class="flex items-center gap-2 min-w-0 shrink-0">
@@ -291,7 +291,7 @@
                     </div>
                     <div class="space-y-1">
                       <label class="field-label" for="agentModel">Model</label>
-                      <input id="agentModel" class="input input-compact" placeholder="e.g. gpt-4o-mini" />
+                      <input id="agentModel" class="input input-compact" placeholder="Default (Server Model)" />
                     </div>
                   </div>
                   <details class="text-[11px]">
@@ -314,19 +314,19 @@
                 </div>
               </div>
             </div>
-            <div id="chatMessages" class="flex-1 overflow-auto custom-scroll p-3 space-y-3 text-sm min-h-0"></div>
-            <div class="p-3 border-t border-border bg-panel2/20 shrink-0">
+            <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll p-3 space-y-3 text-sm"></div>
+            <div class="p-3 border-t border-border bg-panel2/20 shrink-0 sticky bottom-0 z-10">
               <div class="agent-composer">
                 <label class="sr-only" for="chatInput">Agent instruction</label>
-                <textarea id="chatInput" rows="3" class="input" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Ctrl/Cmd+Enter to send)"></textarea>
+                <textarea id="chatInput" rows="3" class="input" enterkeyhint="send" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Enter to send, Shift+Enter for newline)"></textarea>
                 <div class="agent-composer-actions">
                   <div class="flex items-center gap-2">
                     <button id="btnIndexWorkspace" class="btn-secondary btn-xs" title="Index workspace files for RAG">Index Workspace</button>
                     <button id="btnTriggerN8n" class="btn-secondary btn-xs" title="Trigger configured n8n-local-instance webhook with current message">Trigger n8n</button>
                   </div>
-                  <button id="btnSendChat" class="btn-primary" title="Send to Agent">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
-                    Send
+                  <button id="agent-send-btn" type="submit" class="btn-primary" title="Send to Agent">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
+                    <span>Send</span>
                   </button>
                 </div>
               </div>

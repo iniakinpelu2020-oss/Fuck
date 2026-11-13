@@ -1,13 +1,17 @@
 (function () {
   const Agent = {
     init() {
-      document.getElementById('btnSendChat').addEventListener('click', () => this.sendFromUI());
+      const sendBtn = document.getElementById('agent-send-btn') || document.getElementById('btnSendChat');
+      if (sendBtn) sendBtn.addEventListener('click', () => this.sendFromUI());
       document.getElementById('btnRunAgent').addEventListener('click', () => this.sendFromUI());
       const btnN8n = document.getElementById('btnTriggerN8n');
       if (btnN8n) btnN8n.addEventListener('click', () => this.triggerN8nFromUI());
       document.getElementById('btnIndexWorkspace').addEventListener('click', async () => { await RAG.indexWorkspace(); this.updateKeyStatus(); });
       document.getElementById('chatInput').addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.sendFromUI(); }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          this.sendFromUI();
+        }
       });
       const keys = AppState.apiKeys || [];
       document.getElementById('apiKeysInput').value = keys.join('\n');
@@ -182,9 +186,14 @@
 
     buildRequestBody(provider, model, system, userContent) {
       if (provider === 'anthropic') {
-        return { model: model || 'claude-3-5-sonnet-latest', max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
+        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content: userContent }] };
+        if (model) body.model = model;
+        else body.model = 'claude-3-5-sonnet-latest';
+        return body;
       }
-      return { model: model || 'gpt-4o-mini', temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
+      const body = { temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }] };
+      if (model) body.model = model;
+      return body;
     },
 
     extractAssistantText(provider, data) {
