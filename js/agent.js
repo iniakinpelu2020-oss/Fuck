@@ -295,8 +295,10 @@
       try {
         await this.runPrompt(prompt, { fromUI: true, streamBubble });
       } catch (e) {
-        if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
-        else this.addMessage('assistant', `Error: ${e.message}`);
+        const msg = e && e.message ? e.message : String(e);
+        console.error('Agent send error:', e);
+        if (streamBubble) streamBubble.setError(`Error: ${msg}`);
+        else this.addMessage('assistant', `Error: ${msg}`);
       }
     },
 
@@ -321,27 +323,38 @@
     getMcpToolSpecs() {
       const specs = [];
       if (!(window.MCP && typeof MCP.getAllTools === 'function')) return specs;
-      const tools = MCP.getAllTools() || [];
+      let tools = [];
+      try { tools = MCP.getAllTools() || []; } catch { tools = []; }
+      if (!Array.isArray(tools)) return specs;
       for (const t of tools) {
-        const server = String(t.server || '').trim();
-        const name = String(t.name || t.id || '').trim();
-        if (!server || !name) continue;
-        const prefixed = `mcp__${server}__${name}`;
-        const desc = String(t.description || `MCP tool ${name} on server ${server}`).slice(0, 500);
-        let params = t.inputSchema || t.parameters || t.input_schema || t.schema || { type: 'object', properties: {} };
-        // Ensure valid JSON schema object for OpenAI tools
-        if (!params || typeof params !== 'object' || Array.isArray(params)) params = { type: 'object', properties: {} };
-        if (!params.type) params = { ...params, type: 'object' };
-        if (params.type === 'object' && !params.properties) params = { ...params, properties: {} };
-        specs.push({
-          type: 'function',
-          function: {
-            name: prefixed,
-            description: desc,
-            parameters: params
-          },
-          _mcp: { server, tool: name }
-        });
+        try {
+          const server = String((t && (t.server || '')) || '').trim();
+          const name = String((t && (t.name || t.id || '')) || '').trim();
+          if (!server || !name) continue;
+          // Sanitize to valid OpenAI tool name: alphanumeric, underscore, hyphen (max 64 chars)
+          const rawPrefixed = `mcp__${server}__${name}`;
+          const prefixed = rawPrefixed.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+          if (!prefixed) continue;
+          const desc = String((t && t.description) || `MCP tool ${name} on server ${server}`).slice(0, 500);
+          let params = (t && (t.inputSchema || t.parameters || t.input_schema || t.schema)) || { type: 'object', properties: {} };
+          // Ensure valid JSON schema object for OpenAI tools
+          if (!params || typeof params !== 'object' || Array.isArray(params)) params = { type: 'object', properties: {} };
+          // Remove $schema and other non-standard top-level keys that some providers reject
+          const cleanParams = { type: 'object', properties: {} };
+          if (params.type && typeof params.type === 'string') cleanParams.type = params.type;
+          if (params.properties && typeof params.properties === 'object' && !Array.isArray(params.properties)) cleanParams.properties = params.properties;
+          if (Array.isArray(params.required)) cleanParams.required = params.required.filter(x => typeof x === 'string');
+          if (params.description && typeof params.description === 'string') cleanParams.description = params.description;
+          specs.push({
+            type: 'function',
+            function: {
+              name: prefixed,
+              description: desc || 'MCP tool',
+              parameters: cleanParams
+            },
+            _mcp: { server, tool: name }
+          });
+        } catch { /* skip malformed tool spec */ }
       }
       return specs;
     },
@@ -367,11 +380,27 @@
 
     getLlmTools() {
       const tools = [];
-      // Dynamic MCP tools from enabled/discovered servers
-      tools.push(...this.getMcpToolSpecs());
-      // Built-in shell tool
-      tools.push(...this.getBuiltinToolSpecs());
-      return tools;
+      // Dynamic MCP tools from enabled/discovered servers (only include when actually available)
+      try {
+        const mcpSpecs = this.getMcpToolSpecs();
+        if (Array.isArray(mcpSpecs) && mcpSpecs.length) tools.push(...mcpSpecs);
+      } catch { /* ignore */ }
+      // Do NOT include builtin shell tool by default - it forces every request to send `tools`
+      // which many upstreams/proxies reject. Shell execution is handled via structured actions.
+      // Validate: ensure every tool has valid name, description, parameters
+      return tools.filter(t => {
+        try {
+          if (!t || t.type !== 'function' || !t.function) return false;
+          const fn = t.function;
+          if (!fn.name || typeof fn.name !== 'string') return false;
+          if (!/^[a-zA-Z0-9_-]{1,64}$/.test(fn.name)) return false;
+          if (typeof fn.description !== 'string') fn.description = String(fn.description || '');
+          if (!fn.parameters || typeof fn.parameters !== 'object' || Array.isArray(fn.parameters)) {
+            fn.parameters = { type: 'object', properties: {} };
+          }
+          return true;
+        } catch { return false; }
+      });
     },
 
     parseMcpPrefixedToolName(name) {
@@ -544,6 +573,32 @@
           return { text: text || '', toolCalls, raw: data };
         } catch (e) {
           lastError = e;
+          // If tools caused the failure (400/422), retry once without tools
+          const msg = String(e && e.message || '');
+          if (opts.tools && opts.tools.length && (/\b400\b/.test(msg) || /\b422\b/.test(msg))) {
+            try {
+              console.warn('LLM call failed with tools, retrying without tools:', msg);
+              const retryBody = this.buildRequestBody(provider, model, system, promptTextOrMessages, { stream: wantStream });
+              const retryRes = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(retryBody) });
+              if (retryRes.ok) {
+                const rct = (retryRes.headers.get('content-type') || '').toLowerCase();
+                if (wantStream && rct.includes('text/event-stream') && retryRes.body) {
+                  if (customKeys.length) AppState.apiKeyIndex = idx;
+                  this.updateKeyStatus();
+                  const out = await this.readSSEStream(retryRes, opts.onDelta);
+                  return { text: out.text || '', toolCalls: [], raw: null, toolsStripped: true };
+                }
+                const rdata = await retryRes.json().catch(async () => ({ raw: await retryRes.text().catch(() => '') }));
+                if (customKeys.length) AppState.apiKeyIndex = idx;
+                this.updateKeyStatus();
+                const rtext = this.extractAssistantText(provider, rdata);
+                if (opts.onDelta && rtext) opts.onDelta(rtext, rtext);
+                return { text: rtext || '', toolCalls: [], raw: rdata, toolsStripped: true };
+              }
+              const rt = await retryRes.text().catch(() => '');
+              lastError = new Error(`${useManagedProxy ? 'Managed proxy error' : 'API error'} ${retryRes.status}: ${rt.slice(0, 500)}`);
+            } catch (re) { lastError = re; }
+          }
           if (attempt === total - 1) break;
         }
       }
@@ -808,11 +863,12 @@
                     const out = String((r && (r.stdout || r.output)) || '').trim();
                     const err = String((r && r.stderr) || '').trim();
                     toolResultText = (out || '') + (err ? (out ? '\n[stderr]\n' : '[stderr]\n') + err : '');
-                    if (!toolResultText) toolResultText = ok ? '(no output)' : 'Command failed';
+                    if (!toolResultText) toolResultText = ok ? '(no output)' : (err || r?.error || r?.message || 'Command failed');
                     const usedRemote = (r && (r.mode === 'remote' || r.mode === 'remote-http')) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
                     cmdResults.push({ cmd, ...(r || {}), remote: usedRemote });
-                    execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmd}`);
-                    this.updateStatusPill(pill, ok ? (usedRemote ? '✓ Ran remotely' : `✓ Ran: ${cmd.slice(0,36)}`) : '✗ Command failed', ok ? 'done' : 'error');
+                    execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmd}${!ok && err ? ` — ${err.slice(0,120)}` : ''}`);
+                    const failMsg = !ok ? (err || r?.error || r?.message || 'Command failed').slice(0, 60) : '';
+                    this.updateStatusPill(pill, ok ? (usedRemote ? '✓ Ran remotely' : `✓ Ran: ${cmd.slice(0,36)}`) : `✗ ${failMsg || 'Command failed'}`, ok ? 'done' : 'error');
                   } else {
                     toolResultText = 'Error: terminal not available or missing command';
                   }
@@ -838,7 +894,9 @@
           nativeToolCallsAccum = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
         }
       } catch (e) {
-        if (streamBubble) streamBubble.setError(`Error: ${e.message}`);
+        const msg = e && e.message ? e.message : String(e);
+        console.error('Agent runPrompt error:', e);
+        if (streamBubble) streamBubble.setError(`Error: ${msg}`);
         throw e;
       }
       if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
@@ -876,11 +934,13 @@
             execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${t.command}`);
             if (out) execSummary.push(`stdout: ${out.slice(0, 800)}${out.length > 800 ? '…' : ''}`);
             if (err) execSummary.push(`stderr: ${err.slice(0, 800)}${err.length > 800 ? '…' : ''}`);
-            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ Command failed`, ok ? 'done' : 'error');
+            const failMsg = !ok ? (err || res?.error || res?.message || 'Command failed').slice(0, 60) : '';
+            this.updateStatusPill(pill, ok ? (usedRemote ? `✓ Ran remotely` : `✓ Ran: ${String(t.command).slice(0, 36)}`) : `✗ ${failMsg || 'Command failed'}`, ok ? 'done' : 'error');
           } catch (e) {
-            cmdResults.push({ cmd: t.command, ok: false, stderr: e.message, stdout: '', mode: 'browser' });
-            execSummary.push(`Command error: ${t.command} — ${e.message}`);
-            this.updateStatusPill(pill, `✗ Command error`, 'error');
+            const msg = e && e.message ? e.message : String(e);
+            cmdResults.push({ cmd: t.command, ok: false, stderr: msg, stdout: '', mode: 'browser' });
+            execSummary.push(`Command error: ${t.command} — ${msg}`);
+            this.updateStatusPill(pill, `✗ ${String(msg).slice(0, 50) || 'Command error'}`, 'error');
           }
         }
       }

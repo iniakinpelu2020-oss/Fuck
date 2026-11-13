@@ -39,18 +39,23 @@ Behavior:
     activeFilePath: null,
     rootHandle: null,
     workspaceName: 'Memory Workspace',
-    settings: { ...defaultSettings, ...(Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.settings), {}) || {}) },
-    vault: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.vault), []) || [],
-    apiKeys: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.apiKeys), []) || [],
+    settings: (() => { const s = Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.settings), {}); return { ...defaultSettings, ...(s && typeof s === 'object' && !Array.isArray(s) ? s : {}) }; })(),
+    vault: (() => { const v = Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.vault), []); return Array.isArray(v) ? v : []; })(),
+    apiKeys: (() => { const k = Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.apiKeys), []); return Array.isArray(k) ? k : []; })(),
     apiKeyIndex: 0,
-    mcpServers: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.mcp), []) || [],
-    chatSessions: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.chatSessions), []) || [],
-    activeChatId: localStorage.getItem('aether.chat.active.v1') || null,
+    mcpServers: (() => { const m = Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.mcp), []); return Array.isArray(m) ? m : []; })(),
+    chatSessions: (() => { const c = Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.chatSessions), []); return Array.isArray(c) ? c : []; })(),
+    activeChatId: (() => { const id = localStorage.getItem('aether.chat.active.v1'); return (typeof id === 'string' && id) ? id : null; })(),
     listeners: new Set(),
 
     ensureDefaults() {
-      if (!this.settings || typeof this.settings !== 'object') this.settings = { ...defaultSettings };
+      if (!this.settings || typeof this.settings !== 'object' || Array.isArray(this.settings)) this.settings = { ...defaultSettings };
+      for (const k of Object.keys(defaultSettings)) { if (this.settings[k] == null) this.settings[k] = defaultSettings[k]; }
       if (!String(this.settings.webhookUrl || '').trim()) this.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
+      if (!Array.isArray(this.vault)) this.vault = [];
+      if (!Array.isArray(this.apiKeys)) this.apiKeys = [];
+      if (!Array.isArray(this.mcpServers)) this.mcpServers = [];
+      if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
     },
 
     subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
@@ -65,8 +70,9 @@ Behavior:
     saveChatSessions() { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions)); },
     saveActiveChatId(id) { this.activeChatId = id; localStorage.setItem('aether.chat.active.v1', id); },
 
-    getChat(id) { return this.chatSessions.find(s => s.id === id) || null; },
+    getChat(id) { if (!Array.isArray(this.chatSessions)) this.chatSessions = []; return this.chatSessions.find(s => s.id === id) || null; },
     createChat(title = 'New chat') {
+      if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const session = { id, title, pinned: false, updatedAt: Date.now(), messages: [] };
       this.chatSessions.unshift(session);
@@ -81,6 +87,7 @@ Behavior:
       return true;
     },
     deleteChat(id) {
+      if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       const idx = this.chatSessions.findIndex(s => s.id === id);
       if (idx === -1) return false;
       const wasActive = this.activeChatId === id;
@@ -101,6 +108,7 @@ Behavior:
       return s.pinned;
     },
     sortedChats() {
+      if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       return [...this.chatSessions].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
