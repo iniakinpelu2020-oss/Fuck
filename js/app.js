@@ -350,26 +350,31 @@
       m.classList.remove('flex');
     },
 
-    /* ---------- Chat History ---------- */
+    /* ---------- Navigation Drawer / Chat History ---------- */
     bindChatHistory() {
-      const toggle = document.getElementById('btnChatHistoryToggle');
-      const close = document.getElementById('btnChatHistoryClose');
-      const backdrop = document.getElementById('chatHistoryBackdrop');
-      const drawer = document.getElementById('chatHistoryDrawer');
-      const newBtn = document.getElementById('btnNewChat');
+      const hamburger = document.getElementById('btnHamburger');
+      const backdrop = document.getElementById('navDrawerBackdrop');
+      const drawer = document.getElementById('navDrawer');
+      const newBtn = document.getElementById('btnDrawerNewChat');
+      const settingsBtn = document.getElementById('btnDrawerSettings');
 
       const openDrawer = () => {
-        if (drawer) { drawer.classList.remove('hidden'); drawer.classList.add('flex'); setTimeout(() => drawer.classList.remove('-translate-x-full'), 10); }
-        if (backdrop) { backdrop.classList.remove('hidden'); backdrop.classList.add('shown'); }
+        if (drawer) { drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); }
+        if (backdrop) { backdrop.classList.remove('hidden'); backdrop.classList.add('open'); backdrop.setAttribute('aria-hidden', 'false'); }
       };
       const closeDrawer = () => {
-        if (drawer) { drawer.classList.add('-translate-x-full'); setTimeout(() => { drawer.classList.add('hidden'); drawer.classList.remove('flex'); }, 200); }
-        if (backdrop) { backdrop.classList.remove('shown'); backdrop.classList.add('hidden'); }
+        if (drawer) { drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); }
+        if (backdrop) { backdrop.classList.remove('open'); backdrop.setAttribute('aria-hidden', 'true'); setTimeout(() => { if (backdrop && !backdrop.classList.contains('open')) backdrop.classList.add('hidden'); }, 200); }
       };
-      if (toggle) toggle.addEventListener('click', openDrawer);
-      if (close) close.addEventListener('click', closeDrawer);
+      this.openNavDrawer = openDrawer;
+      this.closeNavDrawer = closeDrawer;
+
+      if (hamburger) hamburger.addEventListener('click', (e) => { e.stopPropagation(); openDrawer(); });
       if (backdrop) backdrop.addEventListener('click', closeDrawer);
-      if (newBtn) newBtn.addEventListener('click', (e) => { e.stopPropagation(); this.createNewChat(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawer && drawer.classList.contains('open')) closeDrawer(); });
+
+      if (newBtn) newBtn.addEventListener('click', () => { this.createNewChat(); closeDrawer(); });
+      if (settingsBtn) settingsBtn.addEventListener('click', () => { closeDrawer(); this.openSettings(); });
 
       // Event delegation for pin/delete/switch on chat history list
       const lists = [document.getElementById('chatHistoryPinned'), document.getElementById('chatHistoryRecent')];
@@ -410,17 +415,18 @@
       div.dataset.chatId = s.id;
       const updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
       const title = s.title || 'New chat';
-      const pinIcon = s.pinned ? '★' : '☆';
+      const pinSvg = s.pinned
+        ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>'
+        : '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>';
+      const trashSvg = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
       div.innerHTML = `
-        <div class="flex items-center gap-3 min-w-0 flex-1">
-          <span class="chat-history-pin ${s.pinned ? 'pinned' : ''}" title="${s.pinned ? 'Unpin' : 'Pin'}">${pinIcon}</span>
-          <div class="min-w-0 flex flex-col">
-            <span class="chat-history-title">${this.escapeHtml(title)}</span>
-            ${updated ? `<span class="chat-history-meta">${updated}</span>` : ''}
-          </div>
+        <div class="min-w-0 flex-1 flex flex-col pr-1">
+          <span class="chat-history-title">${this.escapeHtml(title)}</span>
+          ${updated ? `<span class="chat-history-meta !ml-0">${updated}</span>` : ''}
         </div>
         <div class="chat-history-actions">
-          <span class="chat-history-delete" title="Delete">🗑</span>
+          <button class="chat-history-pin ${s.pinned ? 'pinned' : ''}" title="${s.pinned ? 'Unpin' : 'Pin'}" aria-label="${s.pinned ? 'Unpin chat' : 'Pin chat'}">${pinSvg}</button>
+          <button class="chat-history-delete" title="Delete" aria-label="Delete chat">${trashSvg}</button>
         </div>
       `;
       return div;

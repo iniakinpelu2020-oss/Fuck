@@ -376,7 +376,7 @@ header { height: 42px !important; min-height: 42px; }
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* Chat history drawer items */
+/* Chat history list items */
 .chat-history-item {
   display: flex; align-items: center; justify-content: space-between;
   gap: 0.4rem; padding: 0.45rem 0.5rem; border-radius: 8px;
@@ -401,15 +401,38 @@ header { height: 42px !important; min-height: 42px; }
 .chat-history-pin:hover { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.08); }
 .chat-history-pin.pinned { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.12); }
 .chat-history-delete:hover { color: #fca5a5; border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); }
-/* Desktop hover reveals actions; mobile keep actions visible via tap */
+/* Desktop hover reveals actions; always visible on touch/mobile */
 @media (min-width: 901px) {
   .chat-history-item .chat-history-actions { display: none; }
   .chat-history-item:hover .chat-history-actions, .chat-history-item.active .chat-history-actions { display: flex; opacity: 1; }
 }
+
+/* Navigation drawer */
+.nav-drawer-backdrop {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);
+  opacity: 0; pointer-events: none;
+  transition: opacity 200ms ease;
+}
+.nav-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.nav-drawer-backdrop.hidden { display: none; }
+
+.nav-drawer {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+  width: 280px; max-width: 85vw;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+  transform: translateX(-100%);
+  transition: transform 220ms cubic-bezier(.4,0,.2,1);
+  display: flex; flex-direction: column;
+  will-change: transform;
+}
+.nav-drawer.open { transform: translateX(0); }
+.nav-drawer-inner { background: var(--panel); }
+
+/* Mobile adjustments for drawer */
 @media (max-width: 900px) {
-  #chatHistoryDrawer { transform: translatex(0); }
-  #chatHistoryDrawer.hidden { display: none !important; transform: translatex(0); }
-  #chatHistoryBackdrop { display: none; }
-  #chatHistoryBackdrop.hidden { display: none; }
-  #chatHistoryBackdrop.shown { display: block; }
+  .nav-drawer { width: 280px; max-width: 86vw; }
+  .chat-history-item .chat-history-actions { display: flex; opacity: 1; }
 }
