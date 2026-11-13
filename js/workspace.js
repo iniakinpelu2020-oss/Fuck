@@ -75,6 +75,152 @@
     } catch { return null; }
   }
 
+  function uniqueStrings(arr, limit = Infinity) {
+    const seen = new Set();
+    const out = [];
+    for (const v of (arr || [])) {
+      const s = String(v == null ? '' : v).trim();
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  // ---- Binary IOC extraction & embedded payload carving ----
+  function scanAsciiRuns(bytes, minLen = 4, maxScan = 4 * 1024 * 1024, limit = 50000) {
+    const runs = [];
+    let cur = [];
+    let start = 0;
+    const scanLen = Math.min(bytes.length, maxScan);
+    const flush = (i) => {
+      if (cur.length >= minLen) runs.push({ text: cur.join(''), offset: start, length: cur.length });
+      cur = [];
+    };
+    for (let i = 0; i < scanLen; i++) {
+      const b = bytes[i];
+      if (b >= 32 && b <= 126) { if (!cur.length) start = i; cur.push(String.fromCharCode(b)); if (runs.length >= limit) { cur = []; break; } }
+      else flush(i);
+    }
+    flush(scanLen);
+    return runs;
+  }
+
+  function extractBinaryIOCs(buffer, opts = {}) {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+    const maxScan = opts.maxScan || 4 * 1024 * 1024;
+    const runs = scanAsciiRuns(bytes, 4, maxScan, 40000);
+    const urls = [];
+    const ipv4 = [];
+    const regPaths = [];
+    const filePaths = [];
+    for (const r of runs) {
+      const s = r.text;
+      if (s.length < 6) continue;
+      // URLs
+      let m;
+      const urlRe = /\b(?:https?|ftp|ws|wss):\/\/[^\s"'<>\\\x00-\x1F]+/gi;
+      while ((m = urlRe.exec(s)) !== null) urls.push(m[0].replace(/[),.;:]+$/,''));
+      // IPv4 addresses (dotted quads)
+      const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+      while ((m = ipRe.exec(s)) !== null) ipv4.push(m[0]);
+      // Windows registry paths
+      const regRe = /\b(?:HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER|HKEY_CLASSES_ROOT|HKEY_USERS|HKEY_CURRENT_CONFIG|HKLM|HKCU|HKCR|HKU|HKCC)\\[A-Za-z0-9_\-.\\ ]{2,}/gi;
+      while ((m = regRe.exec(s)) !== null) regPaths.push(m[0]);
+      // Windows file paths
+      const winPathRe = /\b[A-Za-z]:\\(?:[^\\\/:*?"<>|\r\n]{1,120}\\)*[^\\\/:*?"<>|\r\n]{0,120}/g;
+      while ((m = winPathRe.exec(s)) !== null) {
+        const p = m[0].replace(/[),.;:]+$/,'');
+        if (p.length >= 6) filePaths.push(p);
+      }
+      // Unix-like file paths of interest
+      if (s.startsWith('/') || s.includes('/etc/') || s.includes('/usr/') || s.includes('/var/') || s.includes('/bin/') || s.includes('/tmp/')) {
+        const uxRe = /(?:^|[\s"'=:])(\/(?:[A-Za-z0-9._@+\-]{1,64}\/){1,12}[A-Za-z0-9._@+\-]{1,96})/g;
+        while ((m = uxRe.exec(s)) !== null) {
+          const p = m[1].replace(/[),.;:]+$/,'');
+          if (p.length >= 6 && p.length <= 260) filePaths.push(p);
+        }
+      }
+    }
+    // Filter out some obvious false-positive IPs/paths
+    const filteredIps = ipv4.filter(ip => !/^0\.0\.0\.0$|^255\.255\.255\.255$/.test(ip));
+
+    // Magic byte signatures / embedded payloads
+    const magicDefs = [
+      { id: 'zip', label: 'ZIP archive (PK\\x03\\x04)', ext: '.zip', mime: 'application/zip', sig: [0x50,0x4B,0x03,0x04] },
+      { id: 'mz', label: 'PE executable (MZ)', ext: '.exe', mime: 'application/x-msdownload', sig: [0x4D,0x5A] },
+      { id: '7z', label: '7z archive (7z\\xBC\\xAF)', ext: '.7z', mime: 'application/x-7z-compressed', sig: [0x37,0x7A,0xBC,0xAF,0x27,0x1C] },
+      { id: 'rar', label: 'RAR archive (Rar!)', ext: '.rar', mime: 'application/vnd.rar', sig: [0x52,0x61,0x72,0x21] }
+    ];
+    const matches = (needle, startIdx) => {
+      if (startIdx + needle.length > bytes.length) return false;
+      for (let i = 0; i < needle.length; i++) if (bytes[startIdx + i] !== needle[i]) return false;
+      return true;
+    };
+    const embedded = [];
+    for (let off = 0; off < bytes.length; off++) {
+      for (const def of magicDefs) {
+        if (!matches(def.sig, off)) continue;
+        // avoid duplicating the primary MZ header at offset 0 as "embedded" noise? keep it but mark
+        embedded.push({ offset: off, type: def.id, label: def.label, ext: def.ext, mime: def.mime, signatureHex: def.sig.map(b=>b.toString(16).padStart(2,'0')).join(' ') });
+        if (embedded.length >= 200) break;
+      }
+      if (embedded.length >= 200) break;
+    }
+    // compute carve ranges (from this offset to next embedded magic or EOF)
+    const embeddedWithRanges = embedded.map((e, i) => {
+      const next = embedded[i + 1];
+      const end = next ? next.offset : bytes.length;
+      return { ...e, endOffset: end, size: Math.max(0, end - e.offset) };
+    });
+
+    const result = {
+      urls: uniqueStrings(urls, 300),
+      ipv4: uniqueStrings(filteredIps, 300),
+      registryPaths: uniqueStrings(regPaths, 300),
+      filePaths: uniqueStrings(filePaths, 300),
+      embedded: embeddedWithRanges,
+      scannedBytes: Math.min(bytes.length, maxScan),
+      totalBytes: bytes.length
+    };
+    return result;
+  }
+
+  function extForEmbedded(e) { return (e && e.ext) || '.bin'; }
+  function mimeForEmbedded(e) { return (e && e.mime) || 'application/octet-stream'; }
+
+  function carveEmbeddedPayloads(buffer, embeddedList, opts = {}) {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+    const list = Array.isArray(embeddedList) ? embeddedList : [];
+    const maxCarve = opts.maxCarve || 10;
+    const maxSize = opts.maxSize || 25 * 1024 * 1024; // 25MB per carve safety cap
+    const results = [];
+    for (const e of list.slice(0, maxCarve)) {
+      if (!e || typeof e.offset !== 'number') continue;
+      const off = Math.max(0, Math.min(bytes.length, e.offset));
+      let end = (typeof e.endOffset === 'number') ? Math.max(off, Math.min(bytes.length, e.endOffset)) : bytes.length;
+      if (end - off > maxSize) end = off + maxSize;
+      if (end <= off) continue;
+      const slice = bytes.slice(off, end);
+      results.push({ ...e, offset: off, endOffset: end, size: slice.byteLength, bytes: slice });
+    }
+    return results;
+  }
+
+  function makeDownloadableFileRecord(name, bytes, mime) {
+    const safeName = sanitizePath(String(name || 'carved.bin').split('/').pop() || 'carved.bin');
+    const size = bytes ? bytes.byteLength || bytes.length || 0 : 0;
+    let downloadUrl = null;
+    try {
+      if (typeof Blob !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
+        const blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
+        downloadUrl = URL.createObjectURL(blob);
+      }
+    } catch {}
+    return { name: safeName, path: safeName, size, mime: mime || 'application/octet-stream', downloadUrl };
+  }
+
   function extractPrintableStrings(buffer, maxCount = 200, maxLen = 4000, opts = {}) {
     try {
       const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
@@ -302,6 +448,7 @@
 
   const Workspace = {
     pendingAttachments: [],
+    lastBinaryIocReport: null,
 
     init() {
       this.pendingAttachments = [];
@@ -517,6 +664,98 @@
       return { path, attachment };
     },
 
+    async getLoadedBinaryBuffer() {
+      // Prefer currently selected/analyzed binary in BinaryInspector, else most recent binary in workspace
+      try {
+        if (window.BinaryInspector && BinaryInspector.selectedFile) {
+          const buf = await BinaryInspector.selectedFile.arrayBuffer();
+          return { name: BinaryInspector.selectedFile.name || 'binary', mime: BinaryInspector.selectedFile.type || 'application/octet-stream', size: BinaryInspector.selectedFile.size || buf.byteLength || 0, buffer: buf };
+        }
+      } catch {}
+      try {
+        if (window.AppState && AppState.files) {
+          const candidates = [];
+          for (const f of AppState.files.values()) {
+            if (f && f.binary && f.meta && f.meta.arrayBuffer) candidates.push(f);
+          }
+          if (candidates.length) {
+            const f = candidates[candidates.length - 1];
+            const ab = f.meta.arrayBuffer;
+            return { name: f.path || f.name || 'binary', mime: (f.meta && f.meta.mime) || 'application/octet-stream', size: (f.meta && f.meta.size) || (ab && ab.byteLength) || 0, buffer: ab, file: f };
+          }
+        }
+      } catch {}
+      return null;
+    },
+
+    async extractBinaryIocs(args = {}) {
+      const opts = (args && typeof args === 'object') ? args : {};
+      const loaded = await this.getLoadedBinaryBuffer();
+      if (!loaded || !loaded.buffer) {
+        return { ok: false, error: 'No binary loaded. Load or select a binary in the Binary analyzer first.' };
+      }
+      const bytes = loaded.buffer instanceof Uint8Array ? loaded.buffer : new Uint8Array(loaded.buffer);
+      const report = extractBinaryIOCs(bytes, { maxScan: opts.maxScan || 4 * 1024 * 1024 });
+      report.source = { name: loaded.name, mime: loaded.mime, size: loaded.size || bytes.length };
+
+      // Optionally carve embedded payloads and add as downloadable files into Workspace
+      const wantCarve = !!(opts.carve || opts.carveEmbedded || opts.extractEmbedded || opts.saveCarved || (Array.isArray(opts.offsets) && opts.offsets.length));
+      const carvedFiles = [];
+      if (wantCarve) {
+        let targets = Array.isArray(report.embedded) ? report.embedded.slice() : [];
+        if (Array.isArray(opts.offsets) && opts.offsets.length) {
+          const wanted = new Set(opts.offsets.map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0));
+          targets = targets.filter(e => wanted.has(Number(e.offset)));
+        }
+        // if specific magic types requested
+        if (opts.types && (Array.isArray(opts.types) || typeof opts.types === 'string')) {
+          const types = new Set((Array.isArray(opts.types) ? opts.types : String(opts.types).split(',')).map(s => String(s).trim().toLowerCase()).filter(Boolean));
+          if (types.size) targets = targets.filter(e => types.has(String(e.type || '').toLowerCase()) || types.has(String(e.ext || '').replace(/^\./,'').toLowerCase()));
+        }
+        const maxCarve = Math.max(0, Math.min(Number(opts.maxCarve || 10) || 10, 25));
+        const carved = carveEmbeddedPayloads(bytes, targets, { maxCarve, maxSize: Number(opts.maxSize || 25 * 1024 * 1024) });
+        for (let i = 0; i < carved.length; i++) {
+          const c = carved[i];
+          const baseName = `carved_${c.type || 'bin'}_${c.offset}${extForEmbedded(c)}`;
+          const rec = makeDownloadableFileRecord(baseName, c.bytes, mimeForEmbedded(c));
+          // Add carved bytes into Workspace as binary file (available for download via blob URL; stored in memory)
+          try {
+            const path = addFileToWorkspace(rec.name, `[Carved embedded payload]\nSource: ${report.source.name}\nType: ${c.label || c.type}\nOffset: ${c.offset} (0x${Number(c.offset).toString(16)})\nSize: ${c.size} bytes\n\n(Downloadable binary payload stored in workspace memory.)`, {
+              dirty: false,
+              binary: true,
+              meta: { size: c.size, mime: rec.mime, arrayBuffer: c.bytes.buffer.slice(c.bytes.byteOffset, c.bytes.byteOffset + c.bytes.byteLength), carvedFrom: report.source.name, carvedOffset: c.offset, carvedType: c.type, downloadUrl: rec.downloadUrl }
+            });
+            rec.workspacePath = path || rec.name;
+          } catch {}
+          carvedFiles.push({ name: rec.name, workspacePath: rec.workspacePath || rec.name, type: c.type, label: c.label, offset: c.offset, endOffset: c.endOffset, size: c.size, mime: rec.mime, downloadUrl: rec.downloadUrl || null });
+        }
+        if (carvedFiles.length && window.AppState && AppState.emit) AppState.emit('workspace:changed');
+      }
+
+      const summary = {
+        ok: true,
+        source: report.source,
+        scannedBytes: report.scannedBytes,
+        totalBytes: report.totalBytes,
+        counts: {
+          urls: report.urls.length,
+          ipv4: report.ipv4.length,
+          registryPaths: report.registryPaths.length,
+          filePaths: report.filePaths.length,
+          embedded: report.embedded.length,
+          carved: carvedFiles.length
+        },
+        urls: report.urls.slice(0, 200),
+        ipv4: report.ipv4.slice(0, 200),
+        registryPaths: report.registryPaths.slice(0, 200),
+        filePaths: report.filePaths.slice(0, 200),
+        embedded: report.embedded.slice(0, 200).map(e => ({ offset: e.offset, endOffset: e.endOffset, size: e.size, type: e.type, label: e.label, signatureHex: e.signatureHex })),
+        carvedFiles
+      };
+      this.lastBinaryIocReport = summary;
+      return summary;
+    },
+
     buildAgentAttachmentContext(attachments) {
       const list = Array.isArray(attachments) ? attachments : [];
       if (!list.length) return '';
@@ -559,5 +798,7 @@
   Workspace.summarizeBinaryBuffer = summarizeBinaryBuffer;
   Workspace.capBinaryContext = capBinaryContext;
   Workspace.extractPrintableStrings = extractPrintableStrings;
+  Workspace.extractBinaryIOCs = extractBinaryIOCs;
+  Workspace.carveEmbeddedPayloads = carveEmbeddedPayloads;
   window.Workspace = Workspace;
 })();

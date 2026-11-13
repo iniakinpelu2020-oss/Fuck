@@ -564,6 +564,10 @@
         normServer = 'builtin';
         normTool = 'trigger_n8n_webhook';
       }
+      if ((s === 'builtin' || s === 'agent' || s === 'apex') && t === 'extract_binary_iocs') {
+        normServer = 'builtin';
+        normTool = 'extract_binary_iocs';
+      }
       let a = args;
       if (a == null || typeof a !== 'object' || Array.isArray(a)) a = {};
       try { return `${normServer}:${normTool}:${this._stableStringify(a)}`; }
@@ -591,6 +595,26 @@
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
           this.updateStatusPill(pill, `⚡ n8n workflow failed${msg ? ': ' + msg : ''}`, 'error');
+          return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
+        }
+      }
+      // Built-in agent tool: extract_binary_iocs (IOC scan + embedded payload carving from loaded binary)
+      if ((server === 'builtin' || server === 'agent' || server === 'apex') && tool === 'extract_binary_iocs') {
+        const label = `builtin:${tool}`;
+        const pill = this.addStatusPill(`🧬 Extracting binary IOCs...`, 'running');
+        try {
+          if (!window.Workspace || typeof Workspace.extractBinaryIocs !== 'function') throw new Error('Binary IOC extractor unavailable');
+          const result = await Workspace.extractBinaryIocs(args || {});
+          if (result && result.ok === false) throw new Error(result.error || 'Binary IOC extraction failed');
+          const resultText = this.formatN8nBody(result);
+          const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
+          const counts = (result && result.counts) || {};
+          const carved = counts.carved ? `, carved ${counts.carved}` : '';
+          this.updateStatusPill(pill, `🧬 Binary IOCs extracted${carved}`, 'done');
+          return { ok: true, server: 'builtin', tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, `🧬 Binary IOC extraction failed${msg ? ': ' + msg : ''}`, 'error');
           return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
         }
       }
@@ -815,6 +839,9 @@
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
       if (!mcpTools.some(t => (t.name || t.id) === 'trigger_n8n_webhook')) {
         mcpTools.unshift({ server: 'builtin', name: 'trigger_n8n_webhook', description: 'POST {event,payload,source:"apex-ide",timestamp} to configured n8n webhook URL and return JSON response. Args: { event, payload }.' });
+      }
+      if (!mcpTools.some(t => (t.name || t.id) === 'extract_binary_iocs')) {
+        mcpTools.unshift({ server: 'builtin', name: 'extract_binary_iocs', description: 'Scan currently loaded binary ArrayBuffer for URLs, IPv4 addresses, Windows registry paths, file paths, and embedded magic bytes (PK\\x03\\x04, MZ, 7z\\xBC\\xAF, Rar!). Args: { carve?:boolean, types?:string[]|string, offsets?:number[], maxCarve?:number } to carve embedded payloads as downloadable files into Workspace. Returns JSON report.' });
       }
       if (mcpTools.length) {
         contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');

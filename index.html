@@ -242,12 +242,12 @@
               <div class="agent-composer max-w-3xl mx-auto w-full" id="chatDropZone">
                 <div id="chatAttachmentChips" class="hidden flex flex-wrap gap-2 mb-2"></div>
                 <label class="sr-only" for="chatInput">Agent instruction</label>
-                <div class="relative">
-                  <button id="btnChatAttach" type="button" class="absolute left-2 bottom-2 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 border border-border text-slate-300 hover:text-white transition-colors" title="Attach files (+)" aria-label="Attach files">
+                <div class="chat-input-row">
+                  <button id="btnChatAttach" type="button" class="chat-attach-btn inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/5 hover:bg-white/10 border border-border text-slate-300 hover:text-white transition-colors shrink-0" title="Attach files (+)" aria-label="Attach files">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                   </button>
-                  <textarea id="chatInput" rows="1" class="input w-full pl-12 pr-12 min-h-[3rem] max-h-48 resize-none" enterkeyhint="send" placeholder="Ask anything… attach files with + or drag & drop. (Enter to send, Shift+Enter for newline)"></textarea>
-                  <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="absolute right-2 bottom-2 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-accent2 hover:bg-accent text-white shadow-glow transition-colors" title="Send (Enter)" aria-label="Send message">
+                  <textarea id="chatInput" rows="1" class="input flex-1 min-w-0 min-h-[3rem] max-h-48 resize-none" enterkeyhint="send" placeholder="Ask anything… attach files with + or drag & drop. (Enter to send, Shift+Enter for newline)"></textarea>
+                  <button id="agent-send-btn-inline" type="button" data-agent-send="inline" class="chat-send-btn inline-flex items-center justify-center w-9 h-9 rounded-lg bg-accent2 hover:bg-accent text-white shadow-glow transition-colors shrink-0" title="Send (Enter)" aria-label="Send message">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="w-4 h-4" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
                   </button>
                   <input id="chatFileInput" type="file" multiple accept="*/*" class="hidden" />
