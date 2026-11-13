@@ -558,11 +558,70 @@
       });
     },
 
+    // --- MCP tool-call fallback routing ---
+    parseMcpToolCallCommand(command) {
+      let cmd = String(command || '').trim();
+      if (!/^mcp-tool-call\s+/i.test(cmd)) return null;
+      cmd = cmd.replace(/^mcp-tool-call\s+/i, '').trim();
+      if (!cmd) return null;
+      const m = cmd.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
+      if (!m) return null;
+      const server = m[1];
+      const tool = m[2];
+      const rest = (m[3] || '').trim();
+      let args = {};
+      if (rest) {
+        let parsed = null;
+        try { parsed = JSON.parse(rest); } catch {}
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed;
+        } else {
+          args = { input: rest };
+        }
+      }
+      // Normalize github_repo_lookup: owner + repo -> owner/repo
+      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
+        args.repo = `${args.owner}/${args.repo}`;
+      }
+      return { server, tool, args };
+    },
+
+    async execMcpToolCall(command) {
+      const parsed = this.parseMcpToolCallCommand(command);
+      if (!parsed) return null;
+      const { server, tool, args } = parsed;
+      if (!(window.MCP && typeof MCP.callTool === 'function')) {
+        return { ok: false, stdout: '', stderr: 'MCP client unavailable', output: 'MCP client unavailable', mode: 'mcp' };
+      }
+      try {
+        const result = await MCP.callTool(server, tool, args);
+        let out = '';
+        if (typeof result === 'string') out = result;
+        else { try { out = JSON.stringify(result, null, 2); } catch { out = String(result); } }
+        if (out.length > 12000) out = out.slice(0, 12000) + '\n…(truncated)';
+        return { ok: true, stdout: out, stderr: '', output: out, mode: 'mcp', result };
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'mcp' };
+      }
+    },
+
     async executeCommand(command) {
       const cmd = String(command || '').trim();
       if (!cmd) return { ok: true, stdout: '', stderr: '', output: '', mode: 'noop' };
       this.ensureShown();
       this.write(`$ ${cmd}`);
+
+      // Fallback: intercept `mcp-tool-call <server>:<tool> <json-args>` and route via MCP.callTool()
+      if (/^mcp-tool-call\s+/i.test(cmd)) {
+        const mcpRes = await this.execMcpToolCall(cmd);
+        if (mcpRes) {
+          if (mcpRes.stdout) this.writeRaw(mcpRes.stdout + (String(mcpRes.stdout).endsWith('\n') ? '' : '\n'));
+          if (mcpRes.stderr) this.writeRaw('\x1b[31m' + mcpRes.stderr + (String(mcpRes.stderr).endsWith('\n') ? '' : '\n') + '\x1b[0m');
+          return mcpRes;
+        }
+      }
+
       let result;
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         result = await this.execRemote(cmd);

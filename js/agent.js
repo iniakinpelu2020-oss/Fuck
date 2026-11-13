@@ -458,16 +458,21 @@
     },
 
     tryParseMcpTerminalCommand(command) {
-      const cmd = String(command || '').trim();
+      let cmd = String(command || '').trim();
+      if (!cmd) return null;
+      const isExplicitMcp = /^mcp-tool-call\s+/i.test(cmd);
+      if (isExplicitMcp) cmd = cmd.replace(/^mcp-tool-call\s+/i, '').trim();
       if (!cmd) return null;
       const m = cmd.match(/^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?:\s+([\s\S]*))?$/);
       if (!m) return null;
       const server = m[1];
       const tool = m[2];
       const rest = (m[3] || '').trim();
-      const mcp = window.MCP;
-      const knownServer = !!(mcp && ((mcp.connections && mcp.connections.has(server)) || ((AppState.mcpServers || []).some(s => s && s.name === server))));
-      if (!knownServer) return null;
+      if (!isExplicitMcp) {
+        const mcp = window.MCP;
+        const knownServer = !!(mcp && ((mcp.connections && mcp.connections.has(server)) || ((AppState.mcpServers || []).some(s => s && s.name === server))));
+        if (!knownServer) return null;
+      }
       let args = {};
       if (rest) {
         const parsed = Utils.safeJsonParse(rest, null);
@@ -482,6 +487,10 @@
           else args = { input: rest };
         }
       }
+      // Normalize github_repo_lookup: owner + repo -> owner/repo
+      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
+        args.repo = `${args.owner}/${args.repo}`;
+      }
       return { server, tool, args };
     },
 
@@ -489,6 +498,10 @@
       const resolved = this.resolveMcpCall(call);
       if (!resolved) return { ok: false, skipped: true, error: 'Invalid MCP tool call' };
       const { server, tool, args } = resolved;
+      // Normalize github_repo_lookup: owner + repo -> owner/repo
+      if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
+        args.repo = `${args.owner}/${args.repo}`;
+      }
       const label = `${server}:${tool}`;
       const pill = this.addStatusPill(`🔌 MCP ${label}...`, 'running');
       try {
@@ -720,7 +733,7 @@
       }
 
       // Terminal/runner: in-browser execution engine or remote bridge; capture real stdout/stderr for agent response
-      // Intercept terminal commands in the form <serverName>:<toolName> and route them via MCP.callTool()
+      // Intercept explicit `mcp-tool-call ...` and terminal commands in the form <serverName>:<toolName> and route them via MCP.callTool()
       if (actions.terminal && actions.terminal.length) {
         for (const t of actions.terminal) {
           if (!t?.command) continue;
