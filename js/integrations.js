@@ -1,5 +1,6 @@
 (function () {
   const N8N_CRED_NAME = 'n8n-local-instance';
+  const DEFAULT_N8N_WEBHOOK_URL = (typeof window !== 'undefined' && window.APEX_DEFAULT_N8N_WEBHOOK_URL) || 'https://drippydee.app.n8n.cloud/webhook/apex-agent';
 
   const Integrations = {
     init() {
@@ -121,7 +122,7 @@
     getN8nConfig() {
       const cred = this.getN8nCredential();
       const parsed = this.parseN8nSecret(cred?.secret);
-      const url = (document.getElementById('n8nWebhookUrl')?.value || '').trim() || cred?.url || AppState.settings.webhookUrl || 'http://localhost:5678/webhook/aether';
+      const url = (document.getElementById('n8nWebhookUrl')?.value || '').trim() || cred?.url || AppState.settings.webhookUrl || DEFAULT_N8N_WEBHOOK_URL;
       const headerName = (document.getElementById('n8nAuthHeader')?.value || '').trim() || parsed.headerName || '';
       const token = (document.getElementById('n8nAuthToken')?.value || '').trim() || parsed.token || '';
       return { url, headerName, token, credentialName: cred?.name || N8N_CRED_NAME };
@@ -152,10 +153,18 @@
       const urlEl = document.getElementById('n8nWebhookUrl');
       const hEl = document.getElementById('n8nAuthHeader');
       const tEl = document.getElementById('n8nAuthToken');
-      if (urlEl && !urlEl.value) urlEl.value = cred?.url || AppState.settings.webhookUrl || '';
+      const fallbackUrl = cred?.url || AppState.settings.webhookUrl || DEFAULT_N8N_WEBHOOK_URL;
+      if (urlEl) {
+        if (!urlEl.value) urlEl.value = fallbackUrl;
+        if (!String(urlEl.value || '').trim()) urlEl.value = DEFAULT_N8N_WEBHOOK_URL;
+      }
       if (hEl && !hEl.value) hEl.value = parsed.headerName || '';
       if (tEl && !tEl.value) tEl.value = parsed.token || '';
-      if (urlEl && cred?.url && urlEl.value === '') urlEl.value = cred.url;
+      // ensure settings reflect pre-configured default for fresh loads
+      if (!String(AppState.settings.webhookUrl || '').trim()) {
+        AppState.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
+        try { AppState.saveSettings(); } catch {}
+      }
     },
 
     renderN8nStatus(state = {}) {
@@ -278,7 +287,7 @@
         },
         async trigger(event = 'manual', data = {}, options = {}) {
           const cfg = this.getConfig();
-          const url = (options.url || cfg.url || '').trim();
+          const url = (options.url || cfg.url || DEFAULT_N8N_WEBHOOK_URL || '').trim();
           if (!url) {
             const err = new Error('No n8n webhook URL configured. Save an n8n config in the Vault/Integrations tab.');
             this.notify({ status: 'error', httpStatus: null, url: '', body: err.message, event, at: new Date().toISOString() });
@@ -291,8 +300,14 @@
           else if (token && !headers.Authorization && /^bearer\s|^basic\s/i.test(token)) headers.Authorization = token;
 
           const payload = options.payload !== undefined ? options.payload : this.buildPayload(event, data);
-          const reqBody = typeof payload === 'string' ? payload : JSON.stringify(payload);
-          this.notify({ status: 'sending', httpStatus: null, url, event, request: { method: options.method || 'POST', headers: { ...headers, ...(headers[headerName] ? { [headerName]: '[redacted]' } : {}), ...(headers.Authorization ? { Authorization: '[redacted]' } : {}) }, payload }, body: `Sending ${options.method || 'POST'} ${url} ...`, at: new Date().toISOString() });
+          // Enforce requested n8n payload contract for the webhook POST body
+          const reqObj = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? { ...payload } : { payload };
+          if (reqObj.event == null || reqObj.event === '') reqObj.event = event || 'manual';
+          if (!Object.prototype.hasOwnProperty.call(reqObj, 'payload')) reqObj.payload = (data && typeof data === 'object') ? data : (data ?? null);
+          if (!reqObj.source) reqObj.source = 'apex-ide';
+          if (!reqObj.timestamp) reqObj.timestamp = new Date().toISOString();
+          const reqBody = typeof options.payload === 'string' ? options.payload : JSON.stringify(reqObj);
+          this.notify({ status: 'sending', httpStatus: null, url, event, request: { method: options.method || 'POST', headers: { ...headers, ...(headers[headerName] ? { [headerName]: '[redacted]' } : {}), ...(headers.Authorization ? { Authorization: '[redacted]' } : {}) }, payload: reqObj }, body: `Sending ${options.method || 'POST'} ${url} ...`, at: new Date().toISOString() });
 
           try {
             const res = await fetch(url, { method: options.method || 'POST', headers, body: reqBody });
@@ -304,9 +319,10 @@
               status: 'completed',
               httpStatus: res.status,
               url,
-              event,
+              event: reqObj.event,
               body,
               raw: text,
+              request: reqObj,
               at: new Date().toISOString()
             };
             this.notify({ status: res.ok ? 'success' : 'error', ...result });

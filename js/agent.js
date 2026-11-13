@@ -498,6 +498,26 @@
       const resolved = this.resolveMcpCall(call);
       if (!resolved) return { ok: false, skipped: true, error: 'Invalid MCP tool call' };
       const { server, tool, args } = resolved;
+      // Built-in agent tool: trigger_n8n_webhook
+      if ((server === 'builtin' || server === 'agent' || server === 'apex') && tool === 'trigger_n8n_webhook') {
+        const label = `builtin:${tool}`;
+        const pill = this.addStatusPill(`⚡ trigger_n8n_webhook...`, 'running');
+        try {
+          const event = (args && (args.event || args.name || args.type)) || 'manual';
+          const payload = (args && Object.prototype.hasOwnProperty.call(args, 'payload')) ? args.payload : (args || {});
+          const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
+          if (!bridge || typeof bridge.trigger !== 'function') throw new Error('n8n webhook bridge unavailable');
+          const result = await bridge.trigger(event, payload, { source: 'apex-ide' });
+          const resultText = this.formatN8nBody(result?.body ?? result);
+          const trimmed = resultText.length > 12000 ? resultText.slice(0, 12000) + '\n…(truncated)' : resultText;
+          this.updateStatusPill(pill, `⚡ trigger_n8n_webhook completed`, 'done');
+          return { ok: true, server: 'builtin', tool, cmd: opts.cmd || label, stdout: trimmed, stderr: '', output: trimmed, mode: 'mcp', result };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, `⚡ trigger_n8n_webhook failed`, 'error');
+          return { ok: false, server: 'builtin', tool, cmd: opts.cmd || label, stdout: '', stderr: msg, output: msg, mode: 'mcp', error: msg };
+        }
+      }
       // Normalize github_repo_lookup: owner + repo -> owner/repo
       if (tool === 'github_repo_lookup' && args && args.owner && args.repo) {
         args.repo = `${args.owner}/${args.repo}`;
@@ -686,6 +706,9 @@
 
       // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
+      if (!mcpTools.some(t => (t.name || t.id) === 'trigger_n8n_webhook')) {
+        mcpTools.unshift({ server: 'builtin', name: 'trigger_n8n_webhook', description: 'POST {event,payload,source:"apex-ide",timestamp} to configured n8n webhook URL and return JSON response. Args: { event, payload }.' });
+      }
       if (mcpTools.length) {
         contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id}${t.description ? ' - ' + t.description : ''}`).join('\n');
       }

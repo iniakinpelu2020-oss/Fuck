@@ -7,6 +7,8 @@
     workspaceMem: 'aether.workspace.memory.v1'
   };
 
+  const DEFAULT_N8N_WEBHOOK_URL = 'https://drippydee.app.n8n.cloud/webhook/apex-agent';
+
   const defaultSettings = {
     systemPrompt: `You are Apex, an autonomous coding and workspace agent inside Apex IDE. Act decisively and helpfully in plain English.
 
@@ -20,14 +22,14 @@ Runtime & tool loop (browser-native, zero-config):
   - For npm/npx/pip/python/bash or system package installs: there is NO Linux shell in browser mode. Do NOT rely on shell installs; instead write the code directly in workspace files, run JS with node, and for web apps create HTML/CSS/JS and the Live Preview will render it.
 - Web search: when live info/docs/news/current details are needed, use provided Web Search Results (/api/search) and synthesize with cited source URLs/titles.
 - Binary inspector: when a binary is loaded or analysis is requested, use provided Binary Inspection Output (headers, signatures, strings, findings, hex) in context.
-- MCP & n8n: configured MCP tools and n8n webhooks may be invoked automatically when relevant; you can also request them via structured actions (mcp/n8n) in json:edits when appropriate. Use results fed back into context.
+- MCP & n8n: configured MCP tools and n8n webhooks may be invoked automatically when relevant; you can also request them via structured actions (mcp/n8n) in json:edits when appropriate. Use results fed back into context. Built-in agent tool: \`trigger_n8n_webhook\` accepts { event, payload } and POSTs JSON { event, payload, source: "apex-ide", timestamp } to the configured n8n webhook URL, returning the JSON response.
 
 Behavior:
 - Be concise, practical, and proactive. Do not invent file paths or results.
 - If no edits are needed, use an empty edits array. Keep user-facing prose clean (do not rely on users reading raw JSON).`,
     ragK: 6,
     terminalWs: 'ws://localhost:3001/terminal',
-    webhookUrl: '',
+    webhookUrl: DEFAULT_N8N_WEBHOOK_URL,
     githubToken: ''
   };
 
@@ -43,6 +45,11 @@ Behavior:
     apiKeyIndex: 0,
     mcpServers: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.mcp), []) || [],
     listeners: new Set(),
+
+    ensureDefaults() {
+      if (!this.settings || typeof this.settings !== 'object') this.settings = { ...defaultSettings };
+      if (!String(this.settings.webhookUrl || '').trim()) this.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
+    },
 
     subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
     emit(event, payload) { for (const fn of this.listeners) try { fn(event, payload); } catch (e) { console.error(e); } },
@@ -104,6 +111,8 @@ Behavior:
     }
   };
 
+  State.ensureDefaults();
   window.AppState = State;
   window.AETHER_STORAGE_KEYS = STORAGE_KEYS;
+  window.APEX_DEFAULT_N8N_WEBHOOK_URL = DEFAULT_N8N_WEBHOOK_URL;
 })();
