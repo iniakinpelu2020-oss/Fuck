@@ -4,7 +4,6 @@
     vault: 'aether.vault.v1',
     apiKeys: 'aether.apikeys.v1',
     mcp: 'aether.mcp.v1',
-    workflow: 'aether.workflow.v1',
     workspaceMem: 'aether.workspace.memory.v1'
   };
 
@@ -34,7 +33,6 @@
     apiKeys: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.apiKeys), []) || [],
     apiKeyIndex: 0,
     mcpServers: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.mcp), []) || [],
-    workflow: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.workflow), { nodes: [], edges: [] }) || { nodes: [], edges: [] },
     listeners: new Set(),
 
     subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
@@ -44,7 +42,6 @@
     saveVault() { localStorage.setItem(STORAGE_KEYS.vault, JSON.stringify(this.vault)); },
     saveApiKeys(keys) { this.apiKeys = keys; localStorage.setItem(STORAGE_KEYS.apiKeys, JSON.stringify(keys)); },
     saveMcp() { localStorage.setItem(STORAGE_KEYS.mcp, JSON.stringify(this.mcpServers)); },
-    saveWorkflow() { localStorage.setItem(STORAGE_KEYS.workflow, JSON.stringify(this.workflow)); },
 
     resetWorkspaceMemory() {
       this.files.clear(); this.dirs = new Set(['']); this.activeFilePath = null; this.rootHandle = null; this.workspaceName = 'Memory Workspace';
@@ -64,7 +61,6 @@
       this.emit('file:changed', { path });
     },
     deletePath(path) {
-      // delete file or directory subtree
       for (const k of Array.from(this.files.keys())) {
         if (k === path || k.startsWith(path + '/')) this.files.delete(k);
       }

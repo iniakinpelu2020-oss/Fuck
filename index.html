@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Aether IDE — Autonomous Coding Workspace</title>
+  <title>Apex IDE — Autonomous Coding Workspace</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -11,92 +11,194 @@
       theme: {
         extend: {
           colors: {
-            base: '#0b0f14',
-            panel: '#111827',
-            panel2: '#0f172a',
-            border: '#1f2937',
-            accent: '#3b82f6',
-            accent2: '#22c55e',
+            base: '#090a0f',
+            panel: '#101218',
+            panel2: '#0d1016',
+            elevated: '#161922',
+            border: 'rgba(255,255,255,0.07)',
+            accent: '#6366f1',
+            accent2: '#3b82f6',
+            success: '#10b981',
             warn: '#f59e0b',
             danger: '#ef4444',
+          },
+          boxShadow: {
+            glow: '0 0 0 1px rgba(59,130,246,0.35), 0 8px 30px rgba(0,0,0,0.35)',
           }
         }
       }
     }
   </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
-<body class="h-full bg-base text-gray-200 overflow-hidden">
-  <div id="app" class="h-full flex flex-col">
-    <!-- Top Bar -->
-    <header class="h-12 flex items-center justify-between px-3 border-b border-border bg-panel2 shrink-0">
-      <div class="flex items-center gap-3">
-        <div class="font-semibold tracking-wide text-white">Aether IDE</div>
-        <div class="text-xs text-gray-400 hidden md:block">Two-in-one Web IDE & Autonomous Agent</div>
-        <span id="workspaceLabel" class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-300">No folder opened</span>
+<body class="h-full bg-base text-slate-200 overflow-hidden antialiased">
+  <div id="app" class="h-screen overflow-hidden flex flex-col bg-base">
+    <!-- Top Header -->
+    <header class="h-[42px] shrink-0 border-b border-border bg-panel2/95 backdrop-blur flex items-center justify-between px-3 gap-2 z-30">
+      <div class="flex items-center gap-2 min-w-0 shrink-0">
+        <div class="flex items-center gap-2 pr-2">
+          <span class="inline-flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-br from-accent2 to-accent text-white text-xs font-bold shadow-glow">Ap</span>
+          <div class="leading-tight">
+            <div class="text-sm font-semibold text-white tracking-tight">Apex IDE</div>
+          </div>
+        </div>
       </div>
-      <div class="flex items-center gap-2 text-xs">
-        <button id="btnToggleWorkflow" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700">Workflow Canvas</button>
-        <button id="btnToggleTerminal" class="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700">Terminal</button>
-        <button id="btnOpenSettings" class="px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Integrations & Keys</button>
-        <button id="btnRunAgent" class="px-2 py-1 rounded bg-accent2 hover:bg-green-600 text-black font-medium">Run Agent</button>
+      <div class="flex-1 flex items-center justify-center min-w-0 px-2">
+        <div class="status-pill-center">
+          <span class="status-dot"></span>
+          <span class="text-[10px] uppercase tracking-wider text-slate-500 hidden sm:inline">Workspace</span>
+          <span id="workspaceLabel" class="truncate max-w-[10rem] sm:max-w-[18rem] text-slate-200" title="Active workspace">No folder opened</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button id="btnPanelExplorer" class="header-btn" data-pane-target="left" title="Toggle Explorer panel">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span class="hidden xl:inline">Explorer</span>
+        </button>
+        <button id="btnToggleTerminal" class="header-btn" title="Toggle terminal drawer">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="m7 9 3 3-3 3M12 15h4"/></svg>
+          <span class="hidden xl:inline">Terminal</span>
+        </button>
+        <button id="btnPanelAgent" class="header-btn" data-pane-target="right" title="Toggle Agent panel">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
+          <span class="hidden xl:inline">Agent</span>
+        </button>
+        <button id="btnOpenSettings" class="header-btn" title="Open integrations and runtime settings">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.1a1 1 0 0 0-.9.6Z"/></svg>
+        </button>
+        <button id="btnRunAgent" class="header-btn header-btn-primary" title="Run agent with current chat prompt">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          <span class="hidden sm:inline">Run</span>
+        </button>
       </div>
     </header>
 
-    <!-- Main Workspace -->
-    <div class="flex-1 flex min-h-0">
+    <!-- Mobile workspace label -->
+    <div class="md:hidden px-3 py-1.5 border-b border-border bg-panel flex items-center gap-2 shrink-0">
+      <span class="status-dot"></span>
+      <span class="text-[10px] uppercase tracking-wider text-slate-500">Workspace</span>
+      <span class="text-xs text-slate-300 truncate" id="workspaceLabelMirror">No folder opened</span>
+    </div>
+
+    <!-- Main Layout -->
+    <div id="workspaceShell" class="flex-1 min-h-0 overflow-hidden relative">
       <!-- Left Panel -->
-      <aside id="leftPanel" class="w-72 min-w-[14rem] max-w-[28rem] border-r border-border bg-panel flex flex-col">
-        <div class="panel-tabs flex border-b border-border text-xs">
-          <button data-left-tab="explorer" class="left-tab flex-1 py-2 bg-gray-800">Explorer</button>
-          <button data-left-tab="github" class="left-tab flex-1 py-2 hover:bg-gray-800">GitHub</button>
-          <button data-left-tab="binary" class="left-tab flex-1 py-2 hover:bg-gray-800">Binary</button>
+      <aside id="leftPanel" class="pane pane-left border-r border-border bg-panel flex flex-col min-h-0">
+        <div class="pane-header">
+          <span class="pane-title">Explorer</span>
+          <span class="text-[10px] text-slate-500">Project & sources</span>
+        </div>
+        <div class="panel-tabs tab-strip pill-tabs">
+          <button data-left-tab="explorer" class="left-tab tab-btn active bg-gray-800">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span>Explorer</span>
+          </button>
+          <button data-left-tab="github" class="left-tab tab-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.31-5.47-1.34-5.47-5.95 0-1.31.47-2.39 1.24-3.23-.13-.3-.54-1.52.12-3.17 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.65.25 2.87.12 3.17.77.84 1.23 1.92 1.23 3.23 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.22v3.29c0 .32.21.7.83.58A12 12 0 0 0 12 .5Z"/></svg>
+            <span>GitHub</span>
+          </button>
+          <button data-left-tab="binary" class="left-tab tab-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h1m3 0h1m-5 4h1m3 0h1"/></svg>
+            <span>Binary</span>
+          </button>
         </div>
         <div class="flex-1 min-h-0 overflow-hidden">
-          <div id="tab-explorer" class="left-tab-panel h-full flex flex-col p-2 gap-2">
-            <div class="flex gap-1">
-              <button id="btnOpenFolder" class="flex-1 px-2 py-1 text-xs rounded bg-accent hover:bg-blue-600 text-white">Open Folder</button>
-              <button id="btnSaveFile" class="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600">Save</button>
+          <div id="tab-explorer" class="left-tab-panel h-full flex flex-col p-3 gap-3 overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-slate-300">Local workspace</div>
+                <span class="badge badge-muted">File System Access</span>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <button id="btnOpenFolder" class="btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6m-3-3h6"/></svg>
+                  Open Folder
+                </button>
+                <button id="btnSaveFile" class="btn-secondary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                  Save File
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <button id="btnNewFile" class="btn-secondary">New File</button>
+                <button id="btnDeleteFile" class="btn-secondary btn-danger-text">Delete Selected</button>
+              </div>
+              <p class="text-[11px] text-slate-500 leading-relaxed">Uses the browser Directory Picker when available. Falls back to an in-memory workspace otherwise.</p>
             </div>
-            <div class="flex gap-1">
-              <button id="btnNewFile" class="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700">New File</button>
-              <button id="btnDeleteFile" class="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-red-300">Delete</button>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div class="section-label mb-1.5">File tree</div>
+              <div id="fileTree" class="flex-1 min-h-[12rem] overflow-auto custom-scroll border border-border rounded-lg bg-base/60 p-1.5"></div>
             </div>
-            <div class="text-[11px] text-gray-400">Local FS via Directory Picker when available; in-memory workspace otherwise.</div>
-            <div id="fileTree" class="flex-1 overflow-auto text-sm border border-border rounded bg-base p-1"></div>
           </div>
-          <div id="tab-github" class="left-tab-panel hidden h-full flex flex-col p-2 gap-2">
-            <label class="text-xs text-gray-400">Clone public GitHub repository structure</label>
-            <input id="githubRepoInput" class="w-full px-2 py-1 rounded bg-base border border-border text-sm" placeholder="owner/repo or https://github.com/owner/repo" />
-            <input id="githubBranchInput" class="w-full px-2 py-1 rounded bg-base border border-border text-sm" placeholder="branch (optional, defaults to default branch)" />
-            <button id="btnCloneRepo" class="px-2 py-1 text-xs rounded bg-accent hover:bg-blue-600 text-white">Fetch Repository</button>
-            <div id="githubStatus" class="text-xs text-gray-400"></div>
-            <div class="text-[11px] text-gray-500">Uses GitHub REST API. Populates workspace tree; large repos may be rate-limited without a token.</div>
-          </div>
-          <div id="tab-binary" class="left-tab-panel hidden h-full flex flex-col p-2 gap-2">
-            <label class="text-xs text-gray-400">Inspect .apk, .exe, .dmg</label>
-            <div id="binaryDropZone" class="border-2 border-dashed border-gray-600 rounded p-4 text-center text-xs text-gray-400 cursor-pointer hover:border-accent">Drop binary/package here or click to select<input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dmg,.zip,.ipa" /></div>
-            <div class="flex gap-1">
-              <button id="btnAnalyzeBinary" class="flex-1 px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600">Analyze</button>
-              <button id="btnClearBinary" class="px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700">Clear</button>
+
+          <div id="tab-github" class="left-tab-panel hidden h-full flex flex-col p-3 gap-3 overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-3">
+              <div>
+                <div class="text-xs font-medium text-slate-300">Clone GitHub repository</div>
+                <p class="text-[11px] text-slate-500 mt-0.5">Import public repository structure and text files into the workspace.</p>
+              </div>
+              <div class="space-y-1.5">
+                <label class="field-label" for="githubRepoInput">Repository</label>
+                <input id="githubRepoInput" class="input" placeholder="owner/repo or https://github.com/owner/repo" />
+              </div>
+              <div class="space-y-1.5">
+                <label class="field-label" for="githubBranchInput">Branch <span class="text-slate-600">(optional)</span></label>
+                <input id="githubBranchInput" class="input" placeholder="Defaults to repository default branch" />
+              </div>
+              <button id="btnCloneRepo" class="btn-primary w-full">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                Fetch Repository
+              </button>
+              <div id="githubStatus" class="status-note">Ready to fetch. Rate limits may apply without a token.</div>
             </div>
-            <pre id="binaryOutput" class="flex-1 overflow-auto text-[11px] bg-base border border-border rounded p-2 whitespace-pre-wrap"></pre>
+          </div>
+
+          <div id="tab-binary" class="left-tab-panel hidden h-full flex flex-col p-3 gap-3 overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-3">
+              <div>
+                <div class="text-xs font-medium text-slate-300">Binary & package inspector</div>
+                <p class="text-[11px] text-slate-500 mt-0.5">Inspect signatures, manifests, strings, and metadata for supported binaries.</p>
+              </div>
+              <div id="binaryDropZone" class="drop-zone">
+                <svg class="w-8 h-8 text-slate-500 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M20 16.5v1a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-1"/></svg>
+                <div class="text-sm text-slate-300 font-medium">Drop binary or package here</div>
+                <div class="text-[11px] text-slate-500 mt-1">.apk, .exe, .dmg, .zip, .ipa — or click to browse</div>
+                <input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dmg,.zip,.ipa" />
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <button id="btnAnalyzeBinary" class="btn-primary">Analyze Binary</button>
+                <button id="btnClearBinary" class="btn-secondary">Clear</button>
+              </div>
+            </div>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div class="section-label mb-1.5">Inspection output</div>
+              <pre id="binaryOutput" class="flex-1 min-h-[10rem] overflow-auto custom-scroll text-[11px] leading-relaxed bg-base border border-border rounded-lg p-3 whitespace-pre-wrap text-slate-300 font-mono"></pre>
+            </div>
           </div>
         </div>
       </aside>
 
       <!-- Center Panel -->
-      <main class="flex-1 min-w-0 flex flex-col">
-        <div class="flex items-center justify-between px-2 py-1 border-b border-border bg-panel2 text-xs">
+      <main id="centerPane" class="pane pane-center min-w-0 flex flex-col bg-base min-h-0 overflow-hidden">
+        <!-- Editor top bar -->
+        <div id="editorTopBar" class="shrink-0 border-b border-border bg-panel2/80 px-2 py-1.5 flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 min-w-0">
-            <span class="text-gray-400">File:</span>
-            <span id="activeFileName" class="truncate text-gray-200">untitled.txt</span>
-            <span id="dirtyIndicator" class="hidden text-warn">● unsaved</span>
+            <div class="editor-tab-pill min-w-0">
+              <svg class="w-3.5 h-3.5 text-accent2 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+              <span id="activeFileName" class="truncate text-slate-200">untitled.txt</span>
+              <span id="dirtyIndicator" class="hidden badge badge-warn ml-1">● Unsaved</span>
+            </div>
           </div>
           <div class="flex items-center gap-2">
-            <select id="languageSelect" class="bg-base border border-border rounded px-1 py-0.5">
+            <span class="text-[11px] text-slate-500 hidden sm:inline">Language</span>
+            <span id="languageBadge" class="badge badge-muted hidden sm:inline">plaintext</span>
+            <label class="sr-only" for="languageSelect">Language</label>
+            <select id="languageSelect" class="input input-compact w-auto min-w-[8rem]">
               <option value="plaintext">plaintext</option>
               <option value="javascript">javascript</option>
               <option value="typescript">typescript</option>
@@ -117,208 +219,325 @@
             <div id="editorContainer" class="flex-1 min-h-0 relative">
               <div class="editor-wrap h-full flex">
                 <pre id="lineNumbers" class="line-numbers"></pre>
-                <div class="editor-stack flex-1 relative overflow-auto">
+                <div class="editor-stack flex-1 relative overflow-auto custom-scroll">
                   <pre id="highlightLayer" aria-hidden="true" class="highlight-layer"></pre>
-                  <textarea id="codeEditor" spellcheck="false" class="code-editor"></textarea>
+                  <textarea id="codeEditor" spellcheck="false" class="code-editor" placeholder="// Start editing..."></textarea>
                 </div>
               </div>
             </div>
-            <div id="terminalPane" class="h-56 border-t border-border bg-black flex flex-col hidden">
-              <div class="flex items-center justify-between px-2 py-1 text-xs bg-panel2 border-b border-border">
-                <div class="flex items-center gap-2">
-                  <span>Terminal</span>
-                  <span id="terminalStatus" class="text-gray-400">disconnected</span>
+
+            <!-- Terminal Drawer -->
+            <div id="terminalPane" class="h-60 min-h-[10rem] border-t border-border bg-[#05070b] flex flex-col hidden">
+              <div class="flex items-center justify-between px-2.5 py-1.5 text-xs bg-panel2 border-b border-border gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <svg class="w-4 h-4 text-accent2 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="m7 9 3 3-3 3M12 15h4"/></svg>
+                  <span class="font-medium text-slate-200">Integrated Terminal</span>
+                  <span id="terminalStatus" class="badge badge-muted capitalize">disconnected</span>
                 </div>
-                <div class="flex items-center gap-2">
-                  <input id="terminalWsUrl" class="bg-base border border-border rounded px-1 py-0.5 w-64" placeholder="ws://localhost:3001/terminal" />
-                  <button id="btnTerminalConnect" class="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600">Connect</button>
-                  <button id="btnTerminalClear" class="px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600">Clear</button>
+                <div class="flex items-center gap-1.5 flex-wrap justify-end">
+                  <input id="terminalWsUrl" class="input input-compact w-56 md:w-72 font-mono" placeholder="ws://localhost:3001/terminal" aria-label="Terminal bridge WebSocket URL" />
+                  <button id="btnTerminalConnect" class="btn-secondary btn-xs">Connect Bridge</button>
+                  <button id="btnTerminalClear" class="btn-secondary btn-xs">Clear Output</button>
                 </div>
               </div>
               <div id="xtermContainer" class="flex-1 min-h-0"></div>
-            </div>
-          </div>
-
-          <!-- Workflow View -->
-          <div id="workflowView" class="hidden flex-1 min-h-0 flex">
-            <div class="w-56 border-r border-border bg-panel p-2 overflow-auto text-xs">
-              <div class="font-semibold mb-2">Node Palette</div>
-              <div class="space-y-2">
-                <div>
-                  <div class="text-gray-400 mb-1">Triggers</div>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="trigger-manual">Manual Trigger</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-webhook">Webhook Trigger</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-cron">Cron Schedule</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="trigger-file">File Change</button>
-                </div>
-                <div>
-                  <div class="text-gray-400 mb-1">Actions</div>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="action-http">HTTP Request</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-code">Code Execution</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-ai">AI Agent Prompt</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="action-terminal">Terminal Command</button>
-                </div>
-                <div>
-                  <div class="text-gray-400 mb-1">Integrations</div>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700" data-node-type="app-slack">Slack/Webhook App</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="app-github">GitHub API App</button>
-                  <button class="node-template w-full text-left px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 mt-1" data-node-type="app-custom">Custom Integration</button>
-                </div>
-              </div>
-              <div class="mt-4 space-y-1">
-                <button id="btnWorkflowRun" class="w-full px-2 py-1 rounded bg-accent2 hover:bg-green-600 text-black font-medium">Run Workflow</button>
-                <button id="btnWorkflowClear" class="w-full px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Clear Canvas</button>
-                <button id="btnWorkflowExport" class="w-full px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Export JSON</button>
-              </div>
-            </div>
-            <div class="flex-1 min-w-0 relative bg-base">
-              <svg id="workflowEdges" class="absolute inset-0 w-full h-full pointer-events-none"></svg>
-              <div id="workflowCanvas" class="absolute inset-0 overflow-auto workflow-grid"></div>
-            </div>
-            <div class="w-72 border-l border-border bg-panel p-2 overflow-auto text-xs">
-              <div class="font-semibold mb-2">Node Inspector</div>
-              <div id="nodeInspector" class="text-gray-400">Select a node to configure it.</div>
-              <div class="mt-4 font-semibold mb-1">Execution Log</div>
-              <pre id="workflowLog" class="h-64 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
             </div>
           </div>
         </div>
       </main>
 
       <!-- Right Panel -->
-      <aside id="rightPanel" class="w-96 min-w-[18rem] max-w-[34rem] border-l border-border bg-panel flex flex-col">
-        <div class="panel-tabs flex border-b border-border text-xs">
-          <button data-right-tab="agent" class="right-tab flex-1 py-2 bg-gray-800">Agent</button>
-          <button data-right-tab="mcp" class="right-tab flex-1 py-2 hover:bg-gray-800">MCP</button>
-          <button data-right-tab="rag" class="right-tab flex-1 py-2 hover:bg-gray-800">RAG</button>
-          <button data-right-tab="vault" class="right-tab flex-1 py-2 hover:bg-gray-800">Vault</button>
+      <aside id="rightPanel" class="pane pane-right border-l border-border bg-panel flex flex-col min-h-0">
+        <div class="pane-header">
+          <span class="pane-title">Agent & Artifact Command Panel</span>
+          <span class="text-[10px] text-slate-500">Mission timeline</span>
+        </div>
+        <div class="panel-tabs tab-strip tab-strip-4 pill-tabs">
+          <button data-right-tab="agent" class="right-tab tab-btn active bg-gray-800">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
+            <span>Agent</span>
+          </button>
+          <button data-right-tab="mcp" class="right-tab tab-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 7h10v10H7z"/><path d="M4 12h3m10 0h3M12 4v3m0 10v3"/></svg>
+            <span>MCP</span>
+          </button>
+          <button data-right-tab="rag" class="right-tab tab-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M8 7h8M8 11h6"/></svg>
+            <span>RAG</span>
+          </button>
+          <button data-right-tab="vault" class="right-tab tab-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3"/></svg>
+            <span>Vault</span>
+          </button>
         </div>
         <div class="flex-1 min-h-0 overflow-hidden">
-          <div id="tab-agent" class="right-tab-panel h-full flex flex-col">
-            <div class="p-2 border-b border-border space-y-2 text-xs">
+          <!-- Agent Tab -->
+          <div id="tab-agent" class="right-tab-panel h-full flex flex-col min-h-0">
+            <div class="px-3 pt-3 pb-2 border-b border-border space-y-2 text-xs shrink-0 bg-panel2/20">
+              <div class="card-surface p-2.5 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-[11px] font-medium text-slate-300 uppercase tracking-wider">Model / Endpoint</div>
+                  <span id="agentKeyStatus" class="badge badge-muted">No API keys configured</span>
+                </div>
+                <div class="grid grid-cols-1 gap-2">
+                  <div class="grid grid-cols-2 gap-2">
+                    <div class="space-y-1">
+                      <label class="field-label" for="agentProvider">Provider</label>
+                      <select id="agentProvider" class="input input-compact">
+                        <option value="openai-compatible">OpenAI-compatible</option>
+                        <option value="anthropic">Anthropic-compatible</option>
+                        <option value="custom">Custom Endpoint</option>
+                      </select>
+                    </div>
+                    <div class="space-y-1">
+                      <label class="field-label" for="agentModel">Model</label>
+                      <input id="agentModel" class="input input-compact" placeholder="e.g. gpt-4o-mini" />
+                    </div>
+                  </div>
+                  <details class="text-[11px]">
+                    <summary class="cursor-pointer text-slate-400 hover:text-slate-200">Endpoint & keys</summary>
+                    <div class="mt-2 space-y-2">
+                      <div class="space-y-1">
+                        <label class="field-label" for="agentEndpoint">API endpoint override <span class="text-slate-600">(optional)</span></label>
+                        <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="https://api.openai.com/v1/chat/completions" />
+                      </div>
+                      <div class="space-y-1">
+                        <label class="field-label" for="apiKeysInput">API keys <span class="text-slate-600">(one per line, auto-rotated)</span></label>
+                        <textarea id="apiKeysInput" rows="2" class="input font-mono text-[11px]" placeholder="sk-...\nsk-..."></textarea>
+                      </div>
+                    </div>
+                  </details>
+                  <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                    <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentUseRag" type="checkbox" checked class="accent-accent" /> Use RAG context</label>
+                    <label class="inline-flex items-center gap-1.5 cursor-pointer"><input id="agentAutoApply" type="checkbox" checked class="accent-accent" /> Auto-apply edits</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="chatMessages" class="flex-1 overflow-auto custom-scroll p-3 space-y-3 text-sm min-h-0"></div>
+            <div class="p-3 border-t border-border bg-panel2/20 shrink-0">
+              <div class="agent-composer">
+                <label class="sr-only" for="chatInput">Agent instruction</label>
+                <textarea id="chatInput" rows="3" class="input" placeholder="Ask the agent to inspect, refactor, run automations, or execute tools... (Ctrl/Cmd+Enter to send)"></textarea>
+                <div class="agent-composer-actions">
+                  <div class="flex items-center gap-2">
+                    <button id="btnIndexWorkspace" class="btn-secondary btn-xs" title="Index workspace files for RAG">Index Workspace</button>
+                    <button id="btnTriggerN8n" class="btn-secondary btn-xs" title="Trigger configured n8n-local-instance webhook with current message">Trigger n8n</button>
+                  </div>
+                  <button id="btnSendChat" class="btn-primary" title="Send to Agent">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MCP Tab -->
+          <div id="tab-mcp" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-slate-300">MCP Server Registry</div>
+                <span class="badge badge-muted">JSON-RPC / WebSocket</span>
+              </div>
+              <label class="field-label" for="mcpConfigInput">Server configuration (JSON array)</label>
+              <textarea id="mcpConfigInput" rows="8" class="input font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
               <div class="flex gap-2">
-                <select id="agentProvider" class="flex-1 bg-base border border-border rounded px-2 py-1">
-                  <option value="openai-compatible">OpenAI-compatible</option>
-                  <option value="anthropic">Anthropic-compatible</option>
-                  <option value="custom">Custom Endpoint</option>
-                </select>
-                <input id="agentModel" class="flex-1 bg-base border border-border rounded px-2 py-1" placeholder="model (e.g. gpt-4o-mini)" />
+                <button id="btnMcpConnect" class="btn-primary flex-1">Connect / Refresh</button>
+                <button id="btnMcpDiscover" class="btn-secondary">Discover Tools</button>
               </div>
-              <input id="agentEndpoint" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="API endpoint (optional override)" />
-              <div>
-                <label class="text-gray-400">API Keys (one per line, auto-rotated on rate limit)</label>
-                <textarea id="apiKeysInput" rows="3" class="w-full bg-base border border-border rounded px-2 py-1 mt-1" placeholder="sk-...\nsk-..."></textarea>
-              </div>
-              <div class="flex items-center gap-2">
-                <label class="flex items-center gap-1"><input id="agentUseRag" type="checkbox" checked /> Use RAG context</label>
-                <label class="flex items-center gap-1"><input id="agentAutoApply" type="checkbox" checked /> Auto-apply edits</label>
-              </div>
-              <div id="agentKeyStatus" class="text-gray-400"></div>
+              <p class="text-[11px] text-slate-500">Connects to local/remote MCP endpoints and exposes discovered tools to the agent context.</p>
             </div>
-            <div id="chatMessages" class="flex-1 overflow-auto p-2 space-y-2 text-sm"></div>
-            <div class="p-2 border-t border-border space-y-2">
-              <textarea id="chatInput" rows="4" class="w-full bg-base border border-border rounded p-2 text-sm" placeholder="Ask the agent to inspect, edit, run workflows, or execute tools..."></textarea>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div class="section-label mb-1.5">Connected servers & tools</div>
+              <pre id="mcpStatus" class="flex-1 min-h-[12rem] overflow-auto custom-scroll bg-base border border-border rounded-lg p-3 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono"></pre>
+            </div>
+          </div>
+
+          <!-- RAG Tab -->
+          <div id="tab-rag" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-2.5">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs font-medium text-slate-300">Local Context Indexer</div>
+                <span class="badge badge-muted">IndexedDB RAG</span>
+              </div>
+              <div id="ragStats" class="badge badge-info inline-flex">Chunks: 0 | Files: 0</div>
               <div class="flex gap-2">
-                <button id="btnSendChat" class="flex-1 px-3 py-1.5 rounded bg-accent hover:bg-blue-600 text-white text-sm">Send</button>
-                <button id="btnIndexWorkspace" class="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm">Index Workspace</button>
+                <button id="btnRagReindex" class="btn-primary flex-1">Reindex Workspace</button>
+                <button id="btnRagClear" class="btn-secondary">Clear Index</button>
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="ragQueryInput">Search indexed snippets</label>
+                <div class="flex gap-2">
+                  <input id="ragQueryInput" class="input flex-1" placeholder="Search code, symbols, or concepts..." />
+                  <button id="btnRagSearch" class="btn-secondary">Search</button>
+                </div>
               </div>
             </div>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div class="section-label mb-1.5">Search results</div>
+              <pre id="ragResults" class="flex-1 min-h-[12rem] overflow-auto custom-scroll bg-base border border-border rounded-lg p-3 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono"></pre>
+            </div>
           </div>
 
-          <div id="tab-mcp" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
-            <div class="font-semibold">MCP Server Registry (JSON-RPC)</div>
-            <textarea id="mcpConfigInput" rows="8" class="w-full bg-base border border-border rounded p-2 font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
-            <div class="flex gap-2">
-              <button id="btnMcpConnect" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Connect / Refresh</button>
-              <button id="btnMcpDiscover" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Discover Tools</button>
+          <!-- Vault Tab -->
+          <div id="tab-vault" class="right-tab-panel hidden h-full flex flex-col p-3 gap-3 text-xs overflow-y-auto custom-scroll">
+            <div class="card-surface p-3 space-y-2.5">
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <div class="text-xs font-medium text-slate-300">n8n Local Instance</div>
+                <span id="n8nStatusBadge" class="badge badge-muted">Idle</span>
+              </div>
+              <p class="text-[11px] text-slate-500">Connect to your local n8n instance (<code class="text-slate-400">http://localhost:5678</code>, health: <code class="text-slate-400">/healthz</code>). Triggers POST to webhook URLs like <code class="text-slate-400">/webhook/&lt;path&gt;</code> with JSON body accessible in n8n as <code class="text-slate-400">$json.body.*</code>.</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div class="sm:col-span-2 space-y-1">
+                  <label class="field-label" for="n8nWebhookUrl">Webhook / API URL</label>
+                  <input id="n8nWebhookUrl" class="input font-mono text-[11px]" placeholder="http://localhost:5678/webhook/your-path" />
+                </div>
+                <div class="space-y-1">
+                  <label class="field-label" for="n8nAuthHeader">Auth header name <span class="text-slate-600">(optional)</span></label>
+                  <input id="n8nAuthHeader" class="input font-mono text-[11px]" placeholder="x-api-key or Authorization" />
+                </div>
+                <div class="space-y-1">
+                  <label class="field-label" for="n8nAuthToken">Auth header value / token <span class="text-slate-600">(optional)</span></label>
+                  <input id="n8nAuthToken" type="password" class="input font-mono text-[11px]" placeholder="your-api-key or Bearer token" />
+                </div>
+                <div class="sm:col-span-2 space-y-1">
+                  <label class="field-label" for="n8nTestPayload">Test message / payload (JSON or text)</label>
+                  <textarea id="n8nTestPayload" rows="3" class="input font-mono text-[11px]" placeholder='{"message":"Hello from Apex IDE","session_id":"session_001"}'></textarea>
+                </div>
+              </div>
+              <div class="flex gap-2 flex-wrap">
+                <button id="btnN8nSaveConfig" class="btn-primary">Save n8n Config</button>
+                <button id="btnN8nHealth" class="btn-secondary">Check Health</button>
+                <button id="btnN8nTrigger" class="btn-secondary">Trigger Workflow</button>
+              </div>
+              <div class="space-y-1">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="section-label">Live trigger status</span>
+                  <span id="n8nHttpStatus" class="badge badge-muted">HTTP —</span>
+                </div>
+                <pre id="n8nExecutionOutput" class="min-h-[7rem] max-h-48 overflow-auto custom-scroll bg-base border border-border rounded-lg p-2.5 text-[11px] leading-relaxed whitespace-pre-wrap text-slate-300 font-mono">No n8n trigger activity yet.</pre>
+              </div>
             </div>
-            <div class="text-gray-400">Connects to remote/local MCP endpoints over WebSocket JSON-RPC where available. Tool metadata is exposed to the agent.</div>
-            <div class="font-semibold mt-1">Connected Servers & Tools</div>
-            <pre id="mcpStatus" class="flex-1 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
-          </div>
 
-          <div id="tab-rag" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
-            <div class="font-semibold">Local Context Indexer (RAG, IndexedDB)</div>
-            <div class="flex gap-2">
-              <button id="btnRagReindex" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Reindex Workspace</button>
-              <button id="btnRagClear" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Clear Index</button>
+            <div class="card-surface p-3 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-medium text-slate-300">App Integration & Credential Hub</div>
+                <span class="badge badge-muted">Local vault</span>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div class="sm:col-span-2 space-y-1">
+                  <label class="field-label" for="vaultName">Integration name</label>
+                  <input id="vaultName" class="input" placeholder="e.g. n8n-local-instance, GitHub, Slack" />
+                </div>
+                <div class="space-y-1">
+                  <label class="field-label" for="vaultType">Credential type</label>
+                  <input id="vaultType" class="input" placeholder="api_key / oauth / webhook / n8n" />
+                </div>
+                <div class="space-y-1">
+                  <label class="field-label" for="vaultUrl">Base URL / webhook URL</label>
+                  <input id="vaultUrl" class="input font-mono text-[11px]" placeholder="https://..." />
+                </div>
+                <div class="sm:col-span-2 space-y-1">
+                  <label class="field-label" for="vaultSecret">Token / secret / JSON config</label>
+                  <textarea id="vaultSecret" rows="3" class="input font-mono text-[11px]" placeholder="Token, secret, or JSON configuration"></textarea>
+                </div>
+              </div>
+              <div class="flex gap-2 flex-wrap">
+                <button id="btnVaultSave" class="btn-primary flex-1">Save Credential</button>
+                <button id="btnVaultExport" class="btn-secondary">Export</button>
+                <button id="btnVaultImport" class="btn-secondary">Import</button>
+              </div>
+              <p class="text-[11px] text-slate-500">Stored in browser local storage for agent/automation use. Avoid committing exported secrets.</p>
             </div>
-            <input id="ragQueryInput" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="Search indexed snippets..." />
-            <button id="btnRagSearch" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Search</button>
-            <div id="ragStats" class="text-gray-400"></div>
-            <pre id="ragResults" class="flex-1 overflow-auto bg-base border border-border rounded p-2 text-[11px] whitespace-pre-wrap"></pre>
-          </div>
-
-          <div id="tab-vault" class="right-tab-panel hidden h-full flex flex-col p-2 gap-2 text-xs">
-            <div class="font-semibold">App Integration & Connection Hub</div>
-            <div class="grid grid-cols-2 gap-2">
-              <input id="vaultName" class="bg-base border border-border rounded px-2 py-1 col-span-2" placeholder="Integration name (e.g. GitHub, Slack, OpenAI)" />
-              <input id="vaultType" class="bg-base border border-border rounded px-2 py-1" placeholder="Type (api_key/oauth/webhook)" />
-              <input id="vaultUrl" class="bg-base border border-border rounded px-2 py-1" placeholder="Base URL / webhook URL" />
-              <textarea id="vaultSecret" rows="3" class="bg-base border border-border rounded px-2 py-1 col-span-2 font-mono" placeholder="Token / secret / JSON config"></textarea>
+            <div class="flex-1 min-h-0 flex flex-col">
+              <div class="section-label mb-1.5">Stored credentials</div>
+              <div id="vaultList" class="flex-1 min-h-[10rem] overflow-auto custom-scroll border border-border rounded-lg bg-base/60 p-2.5 space-y-2"></div>
             </div>
-            <div class="flex gap-2">
-              <button id="btnVaultSave" class="flex-1 px-2 py-1 rounded bg-accent hover:bg-blue-600 text-white">Save Credential</button>
-              <button id="btnVaultExport" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Export</button>
-              <button id="btnVaultImport" class="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">Import</button>
-            </div>
-            <div class="text-gray-400">Stored locally in browser storage for agent/workflow use. Avoid committing secrets.</div>
-            <div id="vaultList" class="flex-1 overflow-auto border border-border rounded bg-base p-2 space-y-2"></div>
           </div>
         </div>
       </aside>
     </div>
 
+    <!-- Mobile Bottom Nav -->
+    <nav id="mobileNav" class="shrink-0 border-t border-border bg-panel2/95 backdrop-blur gap-1 z-30">
+      <button class="mobile-pane-btn active" data-pane-target="left" title="Explorer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span>Explorer</span>
+      </button>
+      <button class="mobile-pane-btn" data-pane-target="center" title="Editor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+        <span>Editor</span>
+      </button>
+      <button class="mobile-pane-btn" data-pane-target="right" title="Agent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><path d="M5 19h14"/></svg>
+        <span>Agent</span>
+      </button>
+    </nav>
+
     <!-- Settings Modal -->
-    <div id="settingsModal" class="hidden fixed inset-0 bg-black/60 z-50 items-center justify-center p-4">
-      <div class="w-full max-w-3xl bg-panel border border-border rounded-lg shadow-xl max-h-[85vh] overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between px-4 py-2 border-b border-border">
-          <div class="font-semibold">Integrations, Keys & Runtime Settings</div>
-          <button id="btnCloseSettings" class="text-gray-400 hover:text-white">✕</button>
-        </div>
-        <div class="p-4 overflow-auto grid md:grid-cols-2 gap-4 text-sm">
-          <div class="space-y-2">
-            <div class="font-medium">Agent Runtime</div>
-            <label class="block text-xs text-gray-400">Default system prompt</label>
-            <textarea id="settingSystemPrompt" rows="8" class="w-full bg-base border border-border rounded p-2 text-xs"></textarea>
-            <label class="block text-xs text-gray-400">Max RAG snippets</label>
-            <input id="settingRagK" type="number" min="1" max="20" value="6" class="w-full bg-base border border-border rounded px-2 py-1" />
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/70 z-50 items-center justify-center p-4">
+      <div class="w-full max-w-4xl bg-panel border border-border rounded-xl shadow-2xl max-h-[88vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-border bg-panel2/60">
+          <div>
+            <div class="font-semibold text-white">Integrations, Keys & Runtime Settings</div>
+            <div class="text-[11px] text-slate-500">Configure agent behavior, bridges, and repository access</div>
           </div>
-          <div class="space-y-2">
-            <div class="font-medium">Execution Bridges</div>
-            <label class="block text-xs text-gray-400">Terminal bridge WebSocket URL</label>
-            <input id="settingTerminalWs" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="ws://localhost:3001/terminal" />
-            <label class="block text-xs text-gray-400">Workflow webhook listener URL (optional backend)</label>
-            <input id="settingWebhookUrl" class="w-full bg-base border border-border rounded px-2 py-1" placeholder="http://localhost:3001/webhook" />
-            <label class="block text-xs text-gray-400">GitHub token (optional, for higher rate limits/private clone metadata)</label>
-            <input id="settingGithubToken" type="password" class="w-full bg-base border border-border rounded px-2 py-1" />
-            <div class="text-xs text-gray-400">Settings persist in local browser storage.</div>
+          <button id="btnCloseSettings" class="icon-btn" aria-label="Close settings">✕</button>
+        </div>
+        <div class="p-4 overflow-auto custom-scroll grid md:grid-cols-2 gap-4 text-sm">
+          <div class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">Agent runtime</div>
+            <div class="space-y-1">
+              <label class="field-label" for="settingSystemPrompt">Default system prompt</label>
+              <textarea id="settingSystemPrompt" rows="10" class="input text-xs font-mono"></textarea>
+            </div>
+            <div class="space-y-1">
+              <label class="field-label" for="settingRagK">Max RAG snippets</label>
+              <input id="settingRagK" type="number" min="1" max="20" value="6" class="input" />
+            </div>
+          </div>
+          <div class="card-surface p-4 space-y-3">
+            <div class="text-sm font-medium text-slate-200">Execution bridges & access</div>
+            <div class="space-y-1">
+              <label class="field-label" for="settingTerminalWs">Terminal bridge WebSocket URL</label>
+              <input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal" />
+            </div>
+            <div class="space-y-1">
+              <label class="field-label" for="settingWebhookUrl">External webhook / automation URL <span class="text-slate-600">(optional)</span></label>
+              <input id="settingWebhookUrl" class="input font-mono text-xs" placeholder="https://example.com/webhook" />
+            </div>
+            <div class="space-y-1">
+              <label class="field-label" for="settingGithubToken">GitHub token <span class="text-slate-600">(optional)</span></label>
+              <input id="settingGithubToken" type="password" class="input font-mono text-xs" placeholder="ghp_..." />
+            </div>
+            <p class="text-[11px] text-slate-500">Settings persist in local browser storage on this device.</p>
           </div>
         </div>
-        <div class="px-4 py-2 border-t border-border flex justify-end gap-2">
-          <button id="btnSaveSettings" class="px-3 py-1.5 rounded bg-accent hover:bg-blue-600 text-white text-sm">Save Settings</button>
+        <div class="px-4 py-3 border-t border-border flex justify-end gap-2 bg-panel2/40">
+          <button id="btnCloseSettingsSecondary" class="btn-secondary">Cancel</button>
+          <button id="btnSaveSettings" class="btn-primary">Save Settings</button>
         </div>
       </div>
     </div>
 
-    <div id="toastContainer" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+    <div id="toastContainer" class="fixed bottom-16 md:bottom-4 right-4 space-y-2 z-[60] pointer-events-none"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="js/utils.js"></script>
-  <script src="js/state.js"></script>
-  <script src="js/fileTree.js"></script>
-  <script src="js/editor.js"></script>
-  <script src="js/terminal.js"></script>
-  <script src="js/binary.js"></script>
-  <script src="js/rag.js"></script>
-  <script src="js/mcp.js"></script>
-  <script src="js/integrations.js"></script>
-  <script src="js/workflow.js"></script>
-  <script src="js/agent.js"></script>
-  <script src="js/app.js"></script>
+  <script src="./js/utils.js"></script>
+  <script src="./js/state.js"></script>
+  <script src="./js/fileTree.js"></script>
+  <script src="./js/editor.js"></script>
+  <script src="./js/terminal.js"></script>
+  <script src="./js/binary.js"></script>
+  <script src="./js/rag.js"></script>
+  <script src="./js/mcp.js"></script>
+  <script src="./js/integrations.js"></script>
+  <script src="./js/agent.js"></script>
+  <script src="./js/app.js"></script>
 </body>
 </html>

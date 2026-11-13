@@ -11,7 +11,7 @@
           convertEol: true,
           cursorBlink: true,
           fontSize: 13,
-          theme: { background: '#000000', foreground: '#e5e7eb' }
+          theme: { background: '#05070b', foreground: '#e5e7eb', cursor: '#3b82f6', selectionBackground: 'rgba(59,130,246,0.35)' }
         });
         if (window.FitAddon && window.FitAddon.FitAddon) {
           this.fit = new window.FitAddon.FitAddon();
@@ -19,7 +19,7 @@
         }
         this.term.open(container);
         this.fit && this.fit.fit();
-        this.term.writeln('\x1b[36mAether Terminal\x1b[0m');
+        this.term.writeln('\x1b[38;2;59;130;246mApex Terminal\x1b[0m');
         this.term.writeln('Connect to a backend shell bridge (WebSocket) to run npm/node/python commands.');
         this.term.writeln('Example bridge protocol: send {type:"input",data:"ls\\n"} / receive {type:"output",data:"..."} or raw text.');
         this.term.onData(data => this.send(data));
@@ -37,8 +37,13 @@
     setStatus(s) {
       this.connected = s === 'connected';
       const el = document.getElementById('terminalStatus');
-      el.textContent = s;
-      el.className = s === 'connected' ? 'text-green-400' : (s === 'connecting' ? 'text-yellow-400' : 'text-gray-400');
+      if (!el) return;
+      const label = s === 'connected' ? 'Connected' : s === 'connecting' ? 'Connecting' : 'Disconnected';
+      el.textContent = label;
+      const base = 'badge capitalize ';
+      if (s === 'connected') el.className = base + 'badge-success text-green-400';
+      else if (s === 'connecting') el.className = base + 'badge-warn text-yellow-400';
+      else el.className = base + 'badge-muted text-gray-400';
     },
 
     connect(url) {
@@ -83,7 +88,6 @@
 
     send(data) {
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-        // support both raw and JSON bridge protocols
         try { this.socket.send(JSON.stringify({ type: 'input', data })); }
         catch { this.socket.send(data); }
       }
