@@ -16,6 +16,11 @@
       Integrations.init();
       Agent.init();
 
+      // Chat history
+      this.bindChatHistory();
+      this.renderChatHistory();
+      this.loadActiveChat();
+
       if (AppState.files.size === 0) {
         AppState.workspaceName = 'Starter Workspace';
         AppState.upsertFile('src/index.js', "console.log('Hello from Apex IDE');\n");
@@ -343,8 +348,158 @@
       const m = document.getElementById('settingsModal');
       m.classList.add('hidden');
       m.classList.remove('flex');
+    },
+
+    /* ---------- Chat History ---------- */
+    bindChatHistory() {
+      const toggle = document.getElementById('btnChatHistoryToggle');
+      const close = document.getElementById('btnChatHistoryClose');
+      const backdrop = document.getElementById('chatHistoryBackdrop');
+      const drawer = document.getElementById('chatHistoryDrawer');
+      const newBtn = document.getElementById('btnNewChat');
+
+      const openDrawer = () => {
+        if (drawer) { drawer.classList.remove('hidden'); drawer.classList.add('flex'); setTimeout(() => drawer.classList.remove('-translate-x-full'), 10); }
+        if (backdrop) { backdrop.classList.remove('hidden'); backdrop.classList.add('shown'); }
+      };
+      const closeDrawer = () => {
+        if (drawer) { drawer.classList.add('-translate-x-full'); setTimeout(() => { drawer.classList.add('hidden'); drawer.classList.remove('flex'); }, 200); }
+        if (backdrop) { backdrop.classList.remove('shown'); backdrop.classList.add('hidden'); }
+      };
+      if (toggle) toggle.addEventListener('click', openDrawer);
+      if (close) close.addEventListener('click', closeDrawer);
+      if (backdrop) backdrop.addEventListener('click', closeDrawer);
+      if (newBtn) newBtn.addEventListener('click', (e) => { e.stopPropagation(); this.createNewChat(); });
+
+      // Event delegation for pin/delete/switch on chat history list
+      const lists = [document.getElementById('chatHistoryPinned'), document.getElementById('chatHistoryRecent')];
+      lists.forEach(list => {
+        if (!list) return;
+        list.addEventListener('click', (e) => {
+          const item = e.target.closest('.chat-history-item');
+          if (!item) return;
+          const id = item.dataset.chatId;
+          const pinBtn = e.target.closest('.chat-history-pin');
+          const delBtn = e.target.closest('.chat-history-delete');
+          if (pinBtn) { e.stopPropagation(); this.togglePin(id); return; }
+          if (delBtn) { e.stopPropagation(); this.confirmDeleteChat(id); return; }
+          this.switchChat(id);
+          closeDrawer();
+        });
+      });
+    },
+
+    renderChatHistory() {
+      const pinnedList = document.getElementById('chatHistoryPinned');
+      const recentList = document.getElementById('chatHistoryRecent');
+      if (!pinnedList || !recentList) return;
+      pinnedList.innerHTML = '';
+      recentList.innerHTML = '';
+      const chats = AppState.sortedChats();
+      const activeId = AppState.activeChatId || null;
+      chats.forEach(s => {
+        const el = this.buildChatItem(s, activeId === s.id);
+        if (s.pinned) pinnedList.appendChild(el);
+        else recentList.appendChild(el);
+      });
+    },
+
+    buildChatItem(s, active) {
+      const div = document.createElement('div');
+      div.className = `chat-history-item ${s.pinned ? 'pinned' : ''} ${active ? 'active' : ''}`;
+      div.dataset.chatId = s.id;
+      const updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      const title = s.title || 'New chat';
+      const pinIcon = s.pinned ? '★' : '☆';
+      div.innerHTML = `
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <span class="chat-history-pin ${s.pinned ? 'pinned' : ''}" title="${s.pinned ? 'Unpin' : 'Pin'}">${pinIcon}</span>
+          <div class="min-w-0 flex flex-col">
+            <span class="chat-history-title">${this.escapeHtml(title)}</span>
+            ${updated ? `<span class="chat-history-meta">${updated}</span>` : ''}
+          </div>
+        </div>
+        <div class="chat-history-actions">
+          <span class="chat-history-delete" title="Delete">🗑</span>
+        </div>
+      `;
+      return div;
+    },
+
+    escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
+
+    createNewChat() {
+      const session = AppState.createChat('New chat');
+      AppState.saveActiveChatId(session.id);
+      this.renderChatHistory();
+      this.loadActiveChat();
+      Utils.toast('New chat', 'info');
+    },
+
+    switchChat(id) {
+      const session = AppState.getChat(id);
+      if (!session) return;
+      AppState.saveActiveChatId(id);
+      this.renderChatHistory();
+      this.loadActiveChat();
+    },
+
+    loadActiveChat() {
+      const id = AppState.activeChatId;
+      const wrap = document.getElementById('chatMessages');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      if (!id) {
+        // ensure a default session exists
+        const s = AppState.createChat('New chat');
+        AppState.saveActiveChatId(s.id);
+        this.renderChatHistory();
+      }
+      const session = AppState.getChat(AppState.activeChatId);
+      if (!session || !session.messages || !session.messages.length) {
+        Agent.addMessage('assistant', 'Hi — I\'m Apex, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings (⚙️) if needed.');
+        return;
+      }
+      session.messages.forEach(m => {
+        if (m.role === 'user') Agent.addMessage('user', m.content, m.meta);
+        else if (m.role === 'assistant') Agent.addMessage('assistant', m.content, m.meta, m.badges);
+        else if (m.role === 'system') Agent.addMessage('system', m.content, m.meta);
+      });
+    },
+
+    togglePin(id) {
+      const pinned = AppState.togglePin(id);
+      this.renderChatHistory();
+      Utils.toast(pinned ? 'Pinned' : 'Unpinned', 'info');
+    },
+
+    confirmDeleteChat(id) {
+      const session = AppState.getChat(id);
+      if (!session) return;
+      if (!confirm(`Delete conversation "${session.title || 'New chat'}"?`)) return;
+      this.deleteChat(id);
+    },
+
+    deleteChat(id) {
+      const wasActive = AppState.activeChatId === id;
+      AppState.deleteChat(id);
+      this.renderChatHistory();
+      if (wasActive) {
+        const next = AppState.getChat(AppState.activeChatId);
+        if (next) {
+          this.loadActiveChat();
+        } else {
+          // no sessions left -> start fresh
+          const fresh = AppState.createChat('New chat');
+          AppState.saveActiveChatId(fresh.id);
+          this.renderChatHistory();
+          this.loadActiveChat();
+        }
+      }
     }
+
   };
 
+  window.App = App;
   window.addEventListener('DOMContentLoaded', () => App.init());
 })();

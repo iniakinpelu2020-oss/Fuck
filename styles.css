@@ -375,3 +375,41 @@ header { height: 42px !important; min-height: 42px; }
   0%, 80%, 100% { transform: scale(0.4); opacity: 0.35; }
   40% { transform: scale(1); opacity: 1; }
 }
+
+/* Chat history drawer items */
+.chat-history-item {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.4rem; padding: 0.45rem 0.5rem; border-radius: 8px;
+  border: 1px solid transparent; cursor: pointer;
+  font-size: 12px; color: #cbd5e1; transition: all 120ms ease;
+  min-height: 0;
+}
+.chat-history-item:hover { background: rgba(255,255,255,0.04); border-color: var(--border); }
+.chat-history-item.active { background: rgba(99,102,241,0.14); border-color: rgba(99,102,241,0.28); color: #fff; }
+.chat-history-item.pinned .chat-history-title { color: #fde047; }
+.chat-history-item.pinned .chat-history-pin { color: #fde047; }
+.chat-history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; font-weight: 500; }
+.chat-history-meta { font-size: 9.5px; color: #64748b; margin-left: 0.5rem; white-space: nowrap; }
+.chat-history-actions { display: none; gap: 0.2rem; align-items: center; flex: 0 0 auto; opacity: 0; transition: opacity 120ms ease; }
+.chat-history-item:hover .chat-history-actions, .chat-history-item.active .chat-history-actions { display: flex; opacity: 1; }
+.chat-history-pin, .chat-history-delete {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px; font-size: 11px;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: #94a3b8;
+  cursor: pointer; transition: all 120ms ease;
+}
+.chat-history-pin:hover { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.08); }
+.chat-history-pin.pinned { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.12); }
+.chat-history-delete:hover { color: #fca5a5; border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); }
+/* Desktop hover reveals actions; mobile keep actions visible via tap */
+@media (min-width: 901px) {
+  .chat-history-item .chat-history-actions { display: none; }
+  .chat-history-item:hover .chat-history-actions, .chat-history-item.active .chat-history-actions { display: flex; opacity: 1; }
+}
+@media (max-width: 900px) {
+  #chatHistoryDrawer { transform: translatex(0); }
+  #chatHistoryDrawer.hidden { display: none !important; transform: translatex(0); }
+  #chatHistoryBackdrop { display: none; }
+  #chatHistoryBackdrop.hidden { display: none; }
+  #chatHistoryBackdrop.shown { display: block; }
+}

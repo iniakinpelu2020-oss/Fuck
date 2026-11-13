@@ -4,7 +4,8 @@
     vault: 'aether.vault.v1',
     apiKeys: 'aether.apikeys.v1',
     mcp: 'aether.mcp.v1',
-    workspaceMem: 'aether.workspace.memory.v1'
+    workspaceMem: 'aether.workspace.memory.v1',
+    chatSessions: 'aether.chat.sessions.v1'
   };
 
   const DEFAULT_N8N_WEBHOOK_URL = 'https://drippydee.app.n8n.cloud/webhook/apex-agent';
@@ -43,6 +44,8 @@ Behavior:
     apiKeys: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.apiKeys), []) || [],
     apiKeyIndex: 0,
     mcpServers: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.mcp), []) || [],
+    chatSessions: Utils.safeJsonParse(localStorage.getItem(STORAGE_KEYS.chatSessions), []) || [],
+    activeChatId: localStorage.getItem('aether.chat.active.v1') || null,
     listeners: new Set(),
 
     ensureDefaults() {
@@ -57,6 +60,53 @@ Behavior:
     saveVault() { localStorage.setItem(STORAGE_KEYS.vault, JSON.stringify(this.vault)); },
     saveApiKeys(keys) { this.apiKeys = keys; localStorage.setItem(STORAGE_KEYS.apiKeys, JSON.stringify(keys)); },
     saveMcp() { localStorage.setItem(STORAGE_KEYS.mcp, JSON.stringify(this.mcpServers)); },
+
+    // Chat session management
+    saveChatSessions() { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions)); },
+    saveActiveChatId(id) { this.activeChatId = id; localStorage.setItem('aether.chat.active.v1', id); },
+
+    getChat(id) { return this.chatSessions.find(s => s.id === id) || null; },
+    createChat(title = 'New chat') {
+      const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const session = { id, title, pinned: false, updatedAt: Date.now(), messages: [] };
+      this.chatSessions.unshift(session);
+      this.saveChatSessions();
+      return session;
+    },
+    updateChat(id, patch) {
+      const s = this.getChat(id);
+      if (!s) return false;
+      Object.assign(s, patch, { updatedAt: Date.now() });
+      this.saveChatSessions();
+      return true;
+    },
+    deleteChat(id) {
+      const idx = this.chatSessions.findIndex(s => s.id === id);
+      if (idx === -1) return false;
+      const wasActive = this.activeChatId === id;
+      this.chatSessions.splice(idx, 1);
+      this.saveChatSessions();
+      if (wasActive) {
+        this.activeChatId = this.chatSessions.length ? this.chatSessions[0].id : null;
+        localStorage.setItem('aether.chat.active.v1', this.activeChatId || '');
+      }
+      return true;
+    },
+    togglePin(id) {
+      const s = this.getChat(id);
+      if (!s) return false;
+      s.pinned = !s.pinned;
+      s.updatedAt = Date.now();
+      this.saveChatSessions();
+      return s.pinned;
+    },
+    sortedChats() {
+      return [...this.chatSessions].sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return b.updatedAt - a.updatedAt;
+      });
+    },
 
     resetWorkspaceMemory() {
       this.files.clear(); this.dirs = new Set(['']); this.activeFilePath = null; this.rootHandle = null; this.workspaceName = 'Memory Workspace';

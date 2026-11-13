@@ -140,6 +140,22 @@
       div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
+
+      // Persist message to active chat session
+      try {
+        const id = AppState.activeChatId;
+        if (id && AppState.chatSessions) {
+          const s = AppState.getChat(id);
+          if (s) {
+            if (!s.messages) s.messages = [];
+            s.messages.push({ role, content, meta, badges, ts: Date.now() });
+            s.updatedAt = Date.now();
+            AppState.saveChatSessions();
+            if (window.App && typeof App.renderChatHistory === 'function') App.renderChatHistory();
+          }
+        }
+      } catch (e) { /* persistence should not break chat */ }
+
       return div;
     },
 

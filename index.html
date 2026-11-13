@@ -224,10 +224,13 @@
       </main>
 
       <!-- Right Panel: Agent-first -->
-      <aside id="rightPanel" class="pane pane-right border-l border-border bg-panel flex flex-col min-h-0">
+      <aside id="rightPanel" class="pane pane-right border-l border-border bg-panel flex flex-col min-h-0 relative">
         <div class="pane-header md:hidden">
           <span class="pane-title">Agent</span>
           <span class="text-[10px] text-slate-500">Autonomous workspace</span>
+          <button id="btnChatHistoryToggle" class="icon-btn" title="Chat history" aria-label="Toggle chat history">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
         </div>
         <div class="hidden" aria-hidden="true">
           <button data-right-tab="agent" class="right-tab tab-btn active bg-gray-800"><span>Agent</span></button>
@@ -236,7 +239,26 @@
           <button data-right-tab="vault" class="right-tab tab-btn"><span>Vault</span></button>
         </div>
         <div class="flex-1 min-h-0 overflow-hidden">
-          <div id="tab-agent" class="right-tab-panel h-full flex flex-col min-h-0">
+          <div id="tab-agent" class="right-tab-panel h-full flex flex-col min-h-0 relative">
+            <!-- Chat History Drawer -->
+            <div id="chatHistoryDrawer" class="fixed inset-y-0 left-0 z-40 w-[260px] bg-panel border-r border-border shadow-2xl transform -translate-x-full transition-transform duration-200 flex flex-col min-h-0 hidden md:block">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-border bg-panel2/80 shrink-0">
+                <div class="font-semibold text-sm text-white">Chats</div>
+                <button id="btnChatHistoryClose" class="icon-btn" aria-label="Close history">✕</button>
+                <button id="btnNewChat" class="icon-btn" title="New chat" aria-label="New chat">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              </div>
+              <div class="flex-1 min-h-0 overflow-y-auto custom-scroll px-2 py-2 space-y-1">
+                <div class="text-[10px] uppercase text-slate-500 px-2 mb-2 font-semibold">Pinned</div>
+                <div id="chatHistoryPinned" class="space-y-1"></div>
+                <div class="text-[10px] uppercase text-slate-500 px-2 mt-3 mb-2 font-semibold">Recent</div>
+                <div id="chatHistoryRecent" class="space-y-1"></div>
+                <div class="h-4"></div>
+              </div>
+            </div>
+            <div id="chatHistoryBackdrop" class="fixed inset-0 bg-black/40 z-30 hidden md:hidden"></div>
+
             <div id="chatMessages" class="flex-1 min-h-0 overflow-y-auto custom-scroll px-3 sm:px-6 py-4 space-y-3 text-sm"></div>
             <div id="agentComposerWrap" class="border-t border-border bg-panel2/30 shrink-0 sticky bottom-0 z-10 px-3 sm:px-6 py-3 pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-4">
               <div class="agent-composer max-w-3xl mx-auto w-full" id="chatDropZone">
