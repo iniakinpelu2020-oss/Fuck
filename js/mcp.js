@@ -10,16 +10,67 @@
         { name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }
       ];
       const cfgInput = document.getElementById('mcpConfigInput');
-      if (cfgInput) cfgInput.value = JSON.stringify(cfg, null, 2);
+      if (cfgInput) {
+        cfgInput.value = JSON.stringify(cfg, null, 2);
+        cfgInput.addEventListener('change', () => {
+          const parsed = Utils.safeJsonParse(cfgInput.value, null);
+          if (Array.isArray(parsed)) this.renderTokenFields(this.mergeServerTokens(parsed, AppState.mcpServers || []));
+        });
+      }
+      this.renderTokenFields(cfg);
       this.render();
+    },
+    mergeServerTokens(servers, existing = []) {
+      const prev = Array.isArray(existing) ? existing : [];
+      return (Array.isArray(servers) ? servers : []).map(s => {
+        if (!s || typeof s !== 'object') return s;
+        const match = prev.find(p => p && p.name && s.name && p.name === s.name) || prev.find(p => p && p.url && s.url && p.url === s.url) || null;
+        let token = (s.token != null && String(s.token).trim() !== '') ? String(s.token).trim() : '';
+        if (!token && match && match.token != null && String(match.token).trim() !== '') token = String(match.token).trim();
+        if (token) return { ...s, token };
+        const copy = { ...s }; delete copy.token; return copy;
+      });
+    },
+    renderTokenFields(servers) {
+      const el = document.getElementById('mcpTokenFields');
+      if (!el) return;
+      const list = Array.isArray(servers) ? servers.filter(s => s && (s.name || s.url)) : [];
+      if (!list.length) { el.innerHTML = ''; return; }
+      const esc = (v) => (window.Utils && Utils.escapeHtml) ? Utils.escapeHtml(String(v == null ? '' : v)) : String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      el.innerHTML = list.map((s, idx) => {
+        const name = String(s.name || s.url || ('server-' + (idx + 1)));
+        const token = String(s.token || '');
+        const safeId = 'mcp-token-' + name.replace(/[^a-zA-Z0-9_-]/g, '_') + '-' + idx;
+        return '<div class="space-y-1"><label class="field-label" for="' + esc(safeId) + '">Bearer Token — ' + esc(name) + ' <span class="text-slate-600">(optional)</span></label><input id="' + esc(safeId) + '" data-mcp-token="' + esc(name) + '" type="password" class="input font-mono text-[11px]" placeholder="Bearer token for ' + esc(name) + '" value="' + esc(token) + '" autocomplete="off" /></div>';
+      }).join('');
+    },
+    syncTokensFromUI(servers) {
+      const list = Array.isArray(servers) ? servers : [];
+      return list.map((s, idx) => {
+        if (!s || typeof s !== 'object') return s;
+        const name = String(s.name || s.url || '');
+        let input = null;
+        const inputs = Array.from(document.querySelectorAll('[data-mcp-token]'));
+        input = inputs.find(el => el.getAttribute('data-mcp-token') === String(s.name || '')) || inputs[idx] || null;
+        if (input) {
+          const token = String(input.value || '').trim();
+          if (token) return { ...s, token };
+          const copy = { ...s }; delete copy.token; return copy;
+        }
+        return s;
+      });
     },
     saveConfigFromUI() {
       const raw = document.getElementById('mcpConfigInput').value;
       const parsed = Utils.safeJsonParse(raw, null);
       if (!Array.isArray(parsed)) throw new Error('MCP config must be a JSON array');
-      AppState.mcpServers = parsed;
+      const merged = this.syncTokensFromUI(this.mergeServerTokens(parsed, AppState.mcpServers || []));
+      AppState.mcpServers = merged;
       AppState.saveMcp();
-      return parsed;
+      const cfgInput = document.getElementById('mcpConfigInput');
+      if (cfgInput) cfgInput.value = JSON.stringify(merged, null, 2);
+      this.renderTokenFields(merged);
+      return merged;
     },
     detectTransport(cfg) {
       const url = String(cfg && cfg.url || '').trim().toLowerCase();
@@ -140,10 +191,12 @@
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timer = setTimeout(() => { try { controller && controller.abort(); } catch {} }, timeoutMs);
       try {
+        const token = String((entry.config && (entry.config.token || entry.config.bearerToken || entry.config.authToken)) || '').trim();
         const headers = {
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/event-stream'
         };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
         if (entry.sessionId) headers['Mcp-Session-Id'] = entry.sessionId;
         const res = await fetch(entry.config.url, {
           method: 'POST',

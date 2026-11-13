@@ -375,6 +375,8 @@
             <div class="text-sm font-medium text-slate-200">MCP Servers</div>
             <label class="field-label" for="mcpConfigInput">Server configuration (JSON array)</label>
             <textarea id="mcpConfigInput" rows="6" class="input font-mono text-[11px]" placeholder='[{"name":"local-tools","url":"ws://localhost:3002/mcp","transport":"websocket"}]'></textarea>
+            <div id="mcpTokenFields" class="space-y-2"></div>
+            <p class="text-[11px] text-slate-500">For authenticated Streamable HTTP MCP servers (e.g. n8n Instance-level MCP), add a Bearer Token per server. Tokens are saved in local browser storage.</p>
             <div class="flex gap-2">
               <button id="btnMcpConnect" class="btn-primary flex-1">Connect / Refresh</button>
               <button id="btnMcpDiscover" class="btn-secondary">Discover Tools</button>

@@ -615,8 +615,11 @@
     },
     formatSearchResults(data) {
       if (!data) return 'No search response.';
-      if (data.error && (!data.results || !data.results.length)) {
-        return `Search unavailable: ${data.error}`;
+      const errStr = String((data && (data.error || data.searxngError || data.message)) || '');
+      const isSearxng502 = /searxng/i.test(errStr) && /502/.test(errStr);
+      if (errStr && (!data.results || !data.results.length)) {
+        if (isSearxng502) return 'Web search unavailable.';
+        return `Search unavailable: ${errStr}`;
       }
       const lines = [];
       if (data.answer) lines.push(`Answer: ${data.answer}`);
@@ -636,7 +639,8 @@
       // tool/search/automation notes
       for (const n of (toolNotes || [])) {
         const s = String(n || '');
-        if (/^Web search:s*d+/i.test(s)) badges.push(`✓ Searched web`);
+        if (/searxng/i.test(s) && /502/.test(s)) continue;
+        if (/^Web search:\s*\d+/i.test(s)) badges.push(`✓ Searched web`);
         else if (/^Web search:/i.test(s)) badges.push(`✓ Web search`);
         else if (/n8n workflow triggered/i.test(s)) badges.push(`✓ n8n workflow`);
         else if (/Binary analysis/i.test(s)) badges.push(`✓ Binary analyzed`);
@@ -684,7 +688,7 @@
             toolNotes.push(`Web search: ${results.length} result(s)`);
             this.updateStatusPill(pill, `🔍 Searched web (${results.length} sources)`, 'done');
           } else if (searxngUnavailable) {
-            // SearXNG unavailable (e.g. 502) - degrade gracefully without warning pill
+            // SearXNG unavailable (e.g. 502) - degrade gracefully without warning pill/note
             this.updateStatusPill(pill, '🔍 Web search unavailable', 'done');
           } else if (errStr) {
             toolNotes.push(`Web search: ${errStr}`);
@@ -869,17 +873,26 @@
         }
       }
 
-      // n8n action requested by agent
+      // n8n action requested by agent (deduped against identical trigger_n8n_webhook/tool calls in same turn)
       if (actions.n8n) {
-        const msg = (typeof actions.n8n === 'string') ? actions.n8n : (actions.n8n.message || actions.n8n.prompt || prompt);
-        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
-        const r = await this.triggerN8n(msg, typeof actions.n8n === 'object' ? actions.n8n : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
-        if (r.ok) {
-          execSummary.push(`n8n workflow result: ${this.formatN8nBody(r.result?.body).slice(0, 500)}`);
-          this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
-        } else {
-          execSummary.push(`n8n action failed: ${r.error}`);
-          this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error');
+        const n8nRaw = actions.n8n;
+        const msg = (typeof n8nRaw === 'string') ? n8nRaw : (n8nRaw.message || n8nRaw.prompt || prompt);
+        const n8nEvent = (n8nRaw && typeof n8nRaw === 'object' && (n8nRaw.event || n8nRaw.type || n8nRaw.name)) || 'manual';
+        const n8nPayload = (n8nRaw && typeof n8nRaw === 'object' && Object.prototype.hasOwnProperty.call(n8nRaw, 'payload'))
+          ? n8nRaw.payload
+          : ((n8nRaw && typeof n8nRaw === 'object') ? n8nRaw : msg);
+        const n8nKey = this._mcpCallKey('builtin', 'trigger_n8n_webhook', { event: n8nEvent, payload: n8nPayload });
+        if (!seenToolCalls.has(n8nKey)) {
+          seenToolCalls.add(n8nKey);
+          const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+          const r = await this.triggerN8n(msg, typeof n8nRaw === 'object' ? n8nRaw : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });
+          if (r.ok) {
+            execSummary.push(`n8n workflow result: ${this.formatN8nBody(r.result?.body).slice(0, 500)}`);
+            this.updateStatusPill(pill, '⚡ n8n workflow triggered', 'done');
+          } else {
+            execSummary.push(`n8n action failed: ${r.error}`);
+            this.updateStatusPill(pill, `⚡ n8n action failed`, r.error === 'not_configured' ? 'warn' : 'error');
+          }
         }
       }
 
