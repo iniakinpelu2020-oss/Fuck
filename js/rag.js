@@ -69,10 +69,48 @@
   const RAG = {
     stats: { chunks: 0, files: 0, lastIndexed: null },
     init() {
-      document.getElementById('btnRagReindex').addEventListener('click', () => this.indexWorkspace());
-      document.getElementById('btnRagClear').addEventListener('click', () => this.clearIndex());
-      document.getElementById('btnRagSearch').addEventListener('click', () => this.searchUI());
+      const re = document.getElementById('btnRagReindex'); if (re) re.addEventListener('click', () => this.indexWorkspace());
+      const cl = document.getElementById('btnRagClear'); if (cl) cl.addEventListener('click', () => this.clearIndex());
+      const se = document.getElementById('btnRagSearch'); if (se) se.addEventListener('click', () => this.searchUI());
       this.refreshStats();
+      // Auto-index RAG snippets whenever workspace files change
+      this._autoTimer = null;
+      this._indexing = false;
+      if (window.AppState && typeof AppState.subscribe === 'function') {
+        AppState.subscribe((evt) => {
+          if (evt === 'file:changed' || evt === 'workspace:changed' || evt === 'workspace:reset') {
+            this.scheduleAutoIndex();
+          }
+        });
+      }
+    },
+    scheduleAutoIndex(delay = 1500) {
+      if (this._autoTimer) clearTimeout(this._autoTimer);
+      this._autoTimer = setTimeout(() => { this.autoIndexWorkspace(); }, delay);
+    },
+    async autoIndexWorkspace() {
+      if (this._indexing) { this.scheduleAutoIndex(1200); return; }
+      this._indexing = true;
+      try {
+        const files = [...AppState.files.values()].filter(f => !f.binary && Utils.isTextLike(f.path));
+        await this.clearIndexSilently();
+        let chunkCount = 0;
+        await withStore('readwrite', (store) => {
+          for (const file of files) {
+            const chunks = chunkText(file.path, file.content || '');
+            for (const c of chunks) {
+              const v = vectorize(`${file.path}\n${c.content}`);
+              store.put({ ...c, vec: v.vec, norm: v.norm });
+              chunkCount++;
+            }
+          }
+        });
+        this.stats = { chunks: chunkCount, files: files.length, lastIndexed: new Date().toISOString() };
+        this.renderStats();
+        if (window.AppState) AppState.emit('rag:indexed', this.stats);
+        // silent: no toast for auto-index
+      } catch (e) { /* silent */ }
+      this._indexing = false;
     },
     async clearIndex() {
       await withStore('readwrite', (store) => store.clear());

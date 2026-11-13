@@ -28,6 +28,8 @@
 
       const tws = document.getElementById('terminalWsUrl');
       if (tws) tws.value = AppState.settings.terminalWs || '';
+      this.bindPreview();
+      this.bindKeyboardViewport();
       this.syncWorkspaceLabels();
       AppState.subscribe((evt, payload) => {
         if (evt === 'workspace:changed' || evt === 'workspace:reset') this.syncWorkspaceLabels();
@@ -49,6 +51,102 @@
       const mirror = document.getElementById('workspaceLabelMirror');
       if (label) label.textContent = text;
       if (mirror) mirror.textContent = text;
+    },
+
+    bindPreview() {
+      const refresh = document.getElementById('btnPreviewRefresh');
+      const close = document.getElementById('btnPreviewClose');
+      if (refresh) refresh.addEventListener('click', () => this.renderPreview());
+      if (close) close.addEventListener('click', () => this.hidePreview());
+    },
+    hidePreview() {
+      const pane = document.getElementById('previewPane');
+      if (pane) pane.classList.add('hidden');
+      const status = document.getElementById('previewStatus');
+      if (status) status.textContent = 'idle';
+    },
+    resolveWorkspacePath(basePath, ref) {
+      if (!ref) return '';
+      const r = String(ref).trim();
+      if (/^(https?:|data:|blob:|mailto:|#)/i.test(r)) return null;
+      const clean = r.split('#')[0].split('?')[0];
+      if (!clean) return null;
+      if (clean.startsWith('/')) return clean.replace(/^\/+/, '');
+      const baseDir = basePath && basePath.includes('/') ? basePath.slice(0, basePath.lastIndexOf('/')) : '';
+      const parts = (baseDir ? baseDir + '/' : '') + clean;
+      const segs = [];
+      for (const part of parts.split('/')) {
+        if (!part || part === '.') continue;
+        if (part === '..') segs.pop(); else segs.push(part);
+      }
+      return segs.join('/');
+    },
+    buildPreviewHtml(entryPath) {
+      let path = entryPath || (AppState.activeFilePath && /\.html?$/i.test(AppState.activeFilePath) ? AppState.activeFilePath : null);
+      if (!path) {
+        // prefer index.html in root or common locations
+        const candidates = ['index.html', 'public/index.html', 'src/index.html', 'app/index.html', 'www/index.html'];
+        path = candidates.find(p => AppState.files.has(p)) || [...AppState.files.keys()].find(p => /(^|\/)index\.html$/i.test(p));
+      }
+      if (!path || !AppState.files.has(path)) return null;
+      let html = String(AppState.files.get(path).content || '');
+      const replaceCss = (match, pre, href, post) => {
+        const resolved = this.resolveWorkspacePath(path, href);
+        if (!resolved || !AppState.files.has(resolved)) return match;
+        const css = String(AppState.files.get(resolved).content || '');
+        return `<style data-preview-src="${Utils.escapeHtml(resolved)}">${css}</style>`;
+      };
+      html = html.replace(/(<link[^>]+href=["'])([^"']+)(["'][^>]*>)/gi, (m, pre, href, post) => {
+        if (!/rel=["']?stylesheet["']?/i.test(m) && !/\.css(\?|#|$)/i.test(href)) return m;
+        return replaceCss(m, pre, href, post);
+      });
+      html = html.replace(/(<script[^>]+src=["'])([^"']+)(["'][^>]*>\s*<\/script>)/gi, (m, pre, src, post) => {
+        if (/\btype=["']module["']/i.test(m)) return m; // modules in srcdoc are tricky; leave as-is
+        const resolved = this.resolveWorkspacePath(path, src);
+        if (!resolved || !AppState.files.has(resolved)) return m;
+        const js = String(AppState.files.get(resolved).content || '').replace(/<\/script>/gi, '<\\/script>');
+        return `<script data-preview-src="${Utils.escapeHtml(resolved)}">${js}<\/script>`;
+      });
+      return { path, html };
+    },
+    renderPreview(entryPath) {
+      const pane = document.getElementById('previewPane');
+      const frame = document.getElementById('previewFrame');
+      const status = document.getElementById('previewStatus');
+      if (!pane || !frame) return false;
+      const built = this.buildPreviewHtml(entryPath);
+      if (!built) {
+        Utils.toast('No HTML file found to preview', 'error');
+        if (status) status.textContent = 'no html';
+        return false;
+      }
+      frame.srcdoc = built.html;
+      pane.classList.remove('hidden');
+      if (status) status.textContent = built.path;
+      this.setView('editor');
+      Utils.toast(`Preview: ${built.path}`, 'success');
+      return true;
+    },
+
+    bindKeyboardViewport() {
+      const wrap = document.getElementById('agentComposerWrap');
+      if (!wrap || !window.visualViewport) return;
+      const onResize = () => {
+        if (!this.isMobile()) { wrap.style.paddingBottom = ''; return; }
+        const vv = window.visualViewport;
+        const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        // keep above mobile nav (4.75rem) and keyboard when open
+        if (kb > 80) {
+          wrap.style.paddingBottom = `calc(${Math.round(kb)}px + env(safe-area-inset-bottom, 0px))`;
+        } else {
+          wrap.style.paddingBottom = '';
+        }
+        const cm = document.getElementById('chatMessages');
+        if (cm) cm.scrollTop = cm.scrollHeight;
+      };
+      window.visualViewport.addEventListener('resize', onResize);
+      window.visualViewport.addEventListener('scroll', onResize);
+      window.addEventListener('resize', onResize);
     },
 
     bindTabs() {

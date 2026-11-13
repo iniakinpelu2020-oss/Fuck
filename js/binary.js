@@ -14,12 +14,17 @@
     },
     setFile(file) {
       this.selectedFile = file;
-      document.getElementById('binaryOutput').textContent = `Selected: ${file.name} (${Utils.formatBytes(file.size)}, ${file.type || 'unknown type'})\nClick Analyze to inspect.`;
+      this.lastAnalysis = null;
+      const out = document.getElementById('binaryOutput');
+      if (out) out.textContent = `Selected: ${file.name} (${Utils.formatBytes(file.size)}, ${file.type || 'unknown type'})\nAnalyzing automatically...`;
+      // Auto-parse loaded binary so agent has live context
+      this.analyze().catch(() => {});
     },
     clear() {
       this.selectedFile = null;
-      document.getElementById('binaryFileInput').value = '';
-      document.getElementById('binaryOutput').textContent = '';
+      this.lastAnalysis = null;
+      const inp = document.getElementById('binaryFileInput'); if (inp) inp.value = '';
+      const out = document.getElementById('binaryOutput'); if (out) out.textContent = '';
     },
     async analyze() {
       const out = document.getElementById('binaryOutput');
@@ -84,7 +89,9 @@
       lines.push(extracted.strings.slice(0, 300).join('\n') || '(none found)');
       lines.push('\n--- Hex Preview (first 256 bytes) ---');
       lines.push(this.hexPreview(bytes, 256));
-      return lines.join('\n');
+      const text = lines.join('\n');
+      this.lastAnalysis = { name: target.name, text, at: Date.now() };
+      return text;
     },
     detectSignature(bytes) {
       const s4 = String.fromCharCode(...bytes.slice(0, 4));
