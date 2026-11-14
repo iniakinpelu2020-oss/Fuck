@@ -98,10 +98,13 @@
         lines.push('No container-specific parser matched; performing generic inspection.');
       }
 
-      // Deep scan for Go and PE/ELF binaries: full ArrayBuffer, with emphasis on .symtab/.rdata/.data
+      // Deep scan for Go and PE/ELF binaries (and requested binary/archive types): full ArrayBuffer, with emphasis on .symtab/.rdata/.data
+      const nameLower = String(target.name || '').toLowerCase();
+      const extName = nameLower.includes('.') ? nameLower.split('.').pop() : '';
+      const requestedScanTypes = new Set(['exe','dll','elf','so','bin','apk','zip']);
       const isElf = sig.type === 'ELF' || /\.elf$|\.so$/i.test(target.name);
       const isPe = sig.type === 'PE/EXE/DLL' || /\.exe$|\.dll$/i.test(target.name);
-      const deepEligible = isElf || isPe;
+      const deepEligible = isElf || isPe || requestedScanTypes.has(extName);
       // detect Go indicators from quick sample
       let isGo = false;
       try {
@@ -110,6 +113,14 @@
       } catch {}
       // also consider .gopclntab / __go_buildinfo sections
       if (this.getSectionByName(parsedSections, ['.gopclntab', '__gopclntab', '.noptrdata', '.go.buildinfo', '__go_buildinfo', '.note.go.buildid'])) isGo = true;
+
+      let goBuildIds = [];
+      try { goBuildIds = this.extractGoBuildIds(bytes, parsedSections) || []; } catch { goBuildIds = []; }
+      if (goBuildIds.length) {
+        isGo = true;
+        lines.push('\n--- Go Build ID ---');
+        for (const id of goBuildIds) lines.push(` - ${id}`);
+      }
 
       if (deepEligible || isGo) {
         lines.push('\n=== Deep Binary Scan (full ArrayBuffer: .symtab / .rdata / .data emphasized) ===');
@@ -127,9 +138,10 @@
         }
         lines.push(`Full buffer scan coverage: 0x0 - 0x${bytes.length.toString(16)} (${bytes.length} bytes)`);
         lines.push(`Format: ${isElf ? 'ELF' : (isPe ? 'PE' : (sig.type || 'unknown'))}${isGo ? ' (Go indicators detected)' : ''}`);
+        if (goBuildIds && goBuildIds.length) lines.push(`Go Build ID: ${goBuildIds[0]}`);
 
-        // 1) Go Project Symbol Extraction
-        if (isGo || isElf || isPe) {
+        // 1) Go Project Symbol Extraction (main.* and custom non-stdlib Go package paths)
+        if (isGo || deepEligible) {
           const goSyms = this.extractGoProjectSymbols(bytes);
           if (isGo || goSyms.length) {
             lines.push('\n--- Go Project Symbol Extraction (main.* and custom non-stdlib Go package paths) ---');
@@ -143,19 +155,16 @@
           }
         }
 
-        // 2) Embedded Archive & Payload Carving Scan (.data + overlay)
-        if (isElf || isPe) {
-          lines.push('\n--- Embedded Archive & Payload Carving Scan (.data section and overlay) ---');
-          const carving = await this.scanDataAndOverlayForMagics(bytes, buf, parsedSections, parsedOverlay);
-          lines.push(carving.text);
-          lines.push('\nFirst 25 printable strings immediately following the .data section start:');
-          if (carving.firstStringsAfterDataStart && carving.firstStringsAfterDataStart.length) {
-            for (const s of carving.firstStringsAfterDataStart) lines.push(' - ' + s);
-          } else if (carving.dataSection) {
-            lines.push(' - (none found)');
-          } else {
-            lines.push(' - (.data section not identified)');
-          }
+        // 2) Embedded Archive & Payload Carving Scan (.data/overlay, or full buffer fallback)
+        lines.push('\n--- Embedded Archive & Payload Carving Scan (.data/overlay or full buffer) ---');
+        const carving = await this.scanDataAndOverlayForMagics(bytes, buf, parsedSections, parsedOverlay);
+        lines.push(carving.text);
+        const stringsRegion = carving.stringsLabelRegion || ((carving.dataSection && (carving.dataSection.name || '.data')) || '.data/whole-file start');
+        lines.push(`\nFirst 25 printable strings immediately following the ${stringsRegion} start:`);
+        if (carving.firstStringsAfterDataStart && carving.firstStringsAfterDataStart.length) {
+          for (const sline of carving.firstStringsAfterDataStart) lines.push(' - ' + sline);
+        } else {
+          lines.push(' - (none found)');
         }
       }
 
@@ -461,27 +470,134 @@
       return out.slice(0, 40);
     },
 
+    extractGoBuildIds(bytes, sections) {
+      const ids = [];
+      const seen = new Set();
+      const add = (v) => {
+        const s = String(v == null ? '' : v).trim().replace(/^["']|["']$/g, '');
+        if (!s || seen.has(s)) return;
+        seen.add(s);
+        ids.push(s);
+      };
+      try {
+        // Scan for "Go build ID:" strings in the full buffer (chunked)
+        const needle = 'Go build ID:';
+        const step = 1 << 16;
+        let carry = '';
+        for (let i = 0; i < bytes.length; i += step) {
+          const end = Math.min(bytes.length, i + step);
+          let chunk = carry;
+          for (let j = i; j < end; j++) {
+            const b = bytes[j];
+            chunk += (b >= 32 && b <= 126) ? String.fromCharCode(b) : '\0';
+          }
+          carry = chunk.slice(-64);
+          let idx = 0;
+          while (true) {
+            const p = chunk.indexOf(needle, idx);
+            if (p < 0) break;
+            const tail = chunk.slice(p + needle.length, p + needle.length + 280).replace(/\0/g, ' ');
+            const m = tail.match(/^\s*"?([^\s"']{4,240})"?/);
+            if (m && m[1]) add(m[1]);
+            idx = p + needle.length;
+          }
+        }
+      } catch {}
+      try {
+        // Check .note.go.buildid / __go_buildinfo sections for readable tokens
+        const note = this.getSectionByName(sections || [], ['.note.go.buildid', '__go_buildinfo', '.go.buildinfo']);
+        if (note && note.offset < bytes.length && note.size > 0) {
+          const start = Math.max(0, note.offset);
+          const end = Math.min(bytes.length, note.offset + note.size);
+          const runs = this.scanStringsInRange(bytes, start, end, 4, 60);
+          for (const r of runs) {
+            const t = String(r.text || '').trim();
+            if (!t) continue;
+            if (/^Go build ID:?/i.test(t)) {
+              const m = t.match(/Go build ID:\s*"?([^\s"']{4,240})"?/i);
+              if (m && m[1]) add(m[1]); else add(t.replace(/^Go build ID:\s*/i, ''));
+            } else if (/^[A-Za-z0-9\/_\-+=:.]{8,240}$/.test(t)) {
+              add(t);
+            }
+          }
+        }
+      } catch {}
+      return ids.slice(0, 10);
+    },
+
     getSectionByName(sections, names) {
       const list = Array.isArray(names) ? names : [names];
       const lower = list.map(n => String(n).toLowerCase());
       return (sections || []).find(sec => lower.includes(String(sec.name || '').toLowerCase())) || null;
     },
 
+    extractGoBuildId(bytes, sections) {
+      const out = [];
+      const seen = new Set();
+      const add = (v) => {
+        const str = String(v == null ? '' : v).trim().replace(/^["']|["']$/g, '');
+        if (!str || seen.has(str)) return;
+        seen.add(str);
+        out.push(str);
+      };
+      try {
+        const needle = 'Go build ID:';
+        const max = bytes.length;
+        const step = 1 << 16; // 64KB
+        let carry = '';
+        for (let i = 0; i < max; i += step) {
+          const end = Math.min(max, i + step);
+          let chunk = carry;
+          for (let j = i; j < end; j++) chunk += String.fromCharCode(bytes[j]);
+          carry = chunk.slice(-64);
+          let idx = 0;
+          while (true) {
+            const p = chunk.indexOf(needle, idx);
+            if (p < 0) break;
+            const tail = chunk.slice(p + needle.length, p + needle.length + 260);
+            const m = tail.match(/^\s*"?([^\s"'\x00\r\n]{4,240})"?/);
+            if (m && m[1]) add(m[1]);
+            idx = p + needle.length;
+          }
+        }
+      } catch {}
+      try {
+        // Also inspect build-id note/info sections for readable IDs
+        const noteSec = this.getSectionByName(sections || [], ['.note.go.buildid', '__go_buildinfo', '.go.buildinfo']);
+        if (noteSec && noteSec.offset < bytes.length && noteSec.size > 0) {
+          const start = Math.max(0, noteSec.offset);
+          const end = Math.min(bytes.length, noteSec.offset + noteSec.size);
+          const runs = this.scanStringsInRange(bytes, start, end, 4, 40);
+          for (const r of runs) {
+            const t = String(r.text || '').trim();
+            if (!t) continue;
+            if (/Go build ID/i.test(t)) {
+              const m = t.match(/Go build ID:\s*"?([^\s"'\x00\r\n]{4,240})"?/i);
+              if (m && m[1]) add(m[1]); else add(t);
+            } else if (/^([A-Za-z0-9/_\-+=:.]{8,}|[a-f0-9]{16,})$/.test(t)) {
+              add(t);
+            }
+          }
+        }
+      } catch {}
+      return out;
+    },
+
     async scanDataAndOverlayForMagics(bytes, buf, sections, overlay) {
       const lines = [];
       const dataSec = this.getSectionByName(sections, ['.data', '__data', 'DATA']);
       const ranges = [];
+      let usedWholeFileFallback = false;
       if (dataSec && dataSec.offset < bytes.length && dataSec.size > 0) {
         ranges.push({ name: dataSec.name || '.data', start: Math.max(0, dataSec.offset), end: Math.min(bytes.length, dataSec.offset + dataSec.size) });
       }
       if (overlay && overlay.offset < bytes.length && overlay.size > 0) {
         ranges.push({ name: 'overlay', start: Math.max(0, overlay.offset), end: Math.min(bytes.length, overlay.offset + overlay.size) });
       }
-      // if no .data/overlay found, we still can report that; but request says scan .data section (and overlay)
       if (!ranges.length) {
-        lines.push('No .data section or overlay region identified; embedded payload magic scan over .data/overlay not performed.');
-        lines.push('(Full-buffer scan was still performed for other analyses.)');
-        return { text: lines.join('\n'), firstStringsAfterDataStart: [] };
+        // Fallback: scan whole file buffer for embedded archive/payload magic bytes
+        ranges.push({ name: 'whole-file', start: 0, end: bytes.length });
+        usedWholeFileFallback = true;
       }
 
       const sigs = [
@@ -518,7 +634,11 @@
         uniqMatches.push(m);
       }
 
-      lines.push('Scanned regions (byte-by-byte) for embedded magic signatures:');
+      if (usedWholeFileFallback) {
+        lines.push('No .data section or overlay region identified; scanned whole file buffer for embedded magic signatures.');
+      } else {
+        lines.push('Scanned regions (byte-by-byte) for embedded magic signatures:');
+      }
       for (const r of ranges) lines.push(` - ${r.name}: start=0x${r.start.toString(16)} (${r.start}) end=0x${r.end.toString(16)} (${r.end}) size=${r.end - r.start} bytes`);
       lines.push('');
       if (!uniqMatches.length) {
@@ -550,14 +670,20 @@
         if (uniqMatches.length > 200) lines.push(` - ... (${uniqMatches.length - 200} more matches omitted)`);
       }
 
-      // first 25 printable strings immediately following the .data section start
+      // first 25 printable strings immediately following the .data section start (or file start fallback)
       let firstStrings = [];
+      let stringsLabelRegion = null;
       if (dataSec && dataSec.offset < bytes.length) {
         const runs = this.scanStringsInRange(bytes, dataSec.offset, bytes.length, 4, 25);
         firstStrings = runs.map(r => `0x${r.offset.toString(16)}: ${r.text}`);
+        stringsLabelRegion = dataSec.name || '.data';
+      } else if (usedWholeFileFallback) {
+        const runs = this.scanStringsInRange(bytes, 0, bytes.length, 4, 25);
+        firstStrings = runs.map(r => `0x${r.offset.toString(16)}: ${r.text}`);
+        stringsLabelRegion = 'whole-file (start)';
       }
 
-      return { text: lines.join('\n'), firstStringsAfterDataStart: firstStrings, dataSection: dataSec || null, ranges };
+      return { text: lines.join('\n'), firstStringsAfterDataStart: firstStrings, dataSection: dataSec || null, ranges, stringsLabelRegion };
     },
 
     isNoisyString(s) {
