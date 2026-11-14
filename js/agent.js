@@ -485,7 +485,8 @@
       const keys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys.filter(k => String(k || '').trim()) : [];
 
       if (mode === 'direct') {
-        const dprov = String(s.directProvider || 'gemini').toLowerCase();
+        const dropdownVal = String(((document.getElementById('agentProvider') || {}).value || '')).toLowerCase();
+        const dprov = dropdownVal && dropdownVal !== 'openai-compatible' ? dropdownVal : String(s.directProvider || 'gemini').toLowerCase();
         const cfg = this.getDirectProviderConfig(dprov);
         let provider = cfg.provider || 'openai-compatible';
         let endpoint = endpointOverride || cfg.endpoint || '';
@@ -761,7 +762,8 @@
 
     async callLLM(promptTextOrMessages, opts = {}) {
       this.persistAgentSettings();
-      const target = this.getLlmTarget();
+      const agentEndpointVal = String((document.getElementById('agentEndpoint') || { value: '' }).value || '').trim();
+      const target = this.getLlmTarget(undefined, undefined, undefined, agentEndpointVal || undefined);
       const provider = target.provider || 'openai-compatible';
       const endpoint = target.endpoint;
       const model = target.model || '';
