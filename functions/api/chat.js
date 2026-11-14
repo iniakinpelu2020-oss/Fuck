@@ -188,6 +188,14 @@ export async function onRequestPost(context) {
       model: attempt.model,
     };
 
+    // Automatic fallback on upstream 503 (UNAVAILABLE) / 429 (RESOURCE_EXHAUSTED):
+    // immediately retry once using gemini-2.5-flash (capped at 2 total attempts).
+    if ((res.status === 503 || res.status === 429) && i === 0 && i + 1 < MAX_UPSTREAM_ATTEMPTS) {
+      attempts[1] = { auth: attempt.auth, model: 'gemini-2.5-flash', reason: 'fallback-503-429-gemini-2.5-flash' };
+      if (attempts.length < 2) attempts.length = 2;
+      continue;
+    }
+
     // Retry on next capped attempt for transient/auth/availability/rate/timeout-like upstream statuses
     const retryable = [401, 403, 404, 408, 409, 425, 429, 500, 502, 503, 504, 522, 523, 524].includes(res.status);
     if (retryable && i < attempts.length - 1) continue;
