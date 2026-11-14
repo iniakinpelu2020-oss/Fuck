@@ -50,7 +50,12 @@
           <div class="text-[10px] text-slate-500 hidden sm:block truncate">Autonomous agent workspace</div>
         </div>
       </div>
-      <div class="flex items-center gap-1.5 shrink-0"></div>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button id="btnNewChat" type="button" class="btn-secondary text-xs px-2.5 py-1.5 h-8" title="New Chat">New Chat</button>
+        <button id="btnOpenSettings" type="button" class="icon-btn w-8 h-8" title="Settings" aria-label="Open settings">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 1 1-4 0v-.1a1 1 0 0 0-.7-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a2 2 0 1 1 0-4h.1a1 1 0 0 0 .9-.7 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 1 1 4 0v.1a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a2 2 0 1 1 2.8-2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6H20a2 2 0 1 1 0 4h-.1a1 1 0 0 0-.9.6Z"/></svg>
+        </button>
+      </div>
     </header>
     <span id="workspaceLabelMirror" class="hidden">No folder opened</span>
 
@@ -314,7 +319,22 @@
             <div class="text-sm font-medium text-slate-200">Agent & Model</div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="space-y-1">
-                <label class="field-label" for="agentProvider">Provider</label>
+                <label class="field-label" for="agentApiMode">API Mode</label>
+                <select id="agentApiMode" class="input input-compact">
+                  <option value="managed">Managed AI Proxy</option>
+                  <option value="direct">Direct API Key</option>
+                </select>
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="agentDirectProvider">Direct Provider <span class="text-slate-500">(Direct mode)</span></label>
+                <select id="agentDirectProvider" class="input input-compact">
+                  <option value="gemini">Gemini</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="groq">Groq</option>
+                </select>
+              </div>
+              <div class="space-y-1">
+                <label class="field-label" for="agentProvider">Provider <span class="text-slate-500">(advanced)</span></label>
                 <select id="agentProvider" class="input input-compact">
                   <option value="openai-compatible">OpenAI-compatible</option>
                   <option value="anthropic">Anthropic-compatible</option>
@@ -322,16 +342,16 @@
                 </select>
               </div>
               <div class="space-y-1">
-                <label class="field-label" for="agentModel">Model <span class="text-slate-500">(blank = server default)</span></label>
-                <input id="agentModel" class="input input-compact" placeholder="Default (Server Model)" />
+                <label class="field-label" for="agentModel">Model <span class="text-slate-500">(blank = provider default)</span></label>
+                <input id="agentModel" class="input input-compact" placeholder="e.g. gemini-2.0-flash / openai/gpt-4o-mini / llama-3.3-70b-versatile" />
               </div>
               <div class="sm:col-span-2 space-y-1">
                 <label class="field-label" for="agentEndpoint">API endpoint override <span class="text-slate-600">(optional)</span></label>
                 <input id="agentEndpoint" class="input font-mono text-[11px]" placeholder="/api/chat (managed) or custom endpoint" />
               </div>
               <div class="sm:col-span-2 space-y-1">
-                <label class="field-label" for="apiKeysInput">Custom API keys / BYOK <span class="text-slate-600">(one per line, optional)</span></label>
-                <textarea id="apiKeysInput" rows="3" class="input font-mono text-[11px]" placeholder="Optional — sk-..."></textarea>
+                <label class="field-label" for="apiKeysInput">API keys / BYOK <span class="text-slate-600">(one per line; required for Direct mode)</span></label>
+                <textarea id="apiKeysInput" rows="3" class="input font-mono text-[11px]" placeholder="sk-... / AIza... / gsk_..."></textarea>
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-4 text-[11px] text-slate-300">

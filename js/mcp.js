@@ -6,7 +6,8 @@
       const btnDiscover = document.getElementById('btnMcpDiscover');
       if (btnConnect) btnConnect.addEventListener('click', () => this.connectFromConfig());
       if (btnDiscover) btnDiscover.addEventListener('click', () => this.discoverAll());
-      const cfg = AppState.mcpServers && AppState.mcpServers.length ? AppState.mcpServers : [
+      const cfg = (AppState.mcpServers && AppState.mcpServers.length) ? AppState.mcpServers : [
+        { name: 'apex-mcp', url: 'https://fuck.iniakinpelu2020.workers.dev', transport: 'http' },
         { name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }
       ];
       const cfgInput = document.getElementById('mcpConfigInput');
@@ -246,7 +247,8 @@
         if (msg.error) throw new Error(msg.error.message || JSON.stringify(msg.error));
         return msg.result;
       } catch (e) {
-        if (e && e.name === 'AbortError') throw new Error(`RPC timeout: ${method}`);
+        if (e && e.name === 'AbortError') throw new Error(`RPC timeout: ${method} at ${entry.config && entry.config.url ? entry.config.url : '(unknown)'}`);
+        if (e instanceof TypeError) throw new Error(`Network request failed to ${entry.config && entry.config.url ? entry.config.url : '(unknown)'}: ${e.message || e}`);
         throw e;
       } finally {
         clearTimeout(timer);

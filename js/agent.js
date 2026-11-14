@@ -59,8 +59,10 @@
       const ep = document.getElementById('agentEndpoint'); if (ep) ep.value = AppState.settings.agentEndpoint || '';
       const model = document.getElementById('agentModel'); if (model) model.value = AppState.settings.agentModel || '';
       const prov = document.getElementById('agentProvider'); if (prov) prov.value = AppState.settings.agentProvider || 'openai-compatible';
-      ['agentEndpoint','agentModel','agentProvider'].forEach(id => {
-        const el = document.getElementById(id); if (el) el.addEventListener('change', () => this.persistAgentSettings());
+      const mode = document.getElementById('agentApiMode'); if (mode) mode.value = AppState.settings.apiMode || 'managed';
+      const dprov = document.getElementById('agentDirectProvider'); if (dprov) dprov.value = AppState.settings.directProvider || 'gemini';
+      ['agentEndpoint','agentModel','agentProvider','agentApiMode','agentDirectProvider'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.addEventListener('change', () => { this.persistAgentSettings(); this.updateKeyStatus(); });
       });
       AppState.subscribe((evt) => { if (evt === 'rag:indexed' || evt === 'rag:cleared' || evt === 'workspace:changed') this.updateKeyStatus(); });
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
@@ -80,18 +82,34 @@
       const ep = document.getElementById('agentEndpoint'); if (ep) AppState.settings.agentEndpoint = ep.value.trim();
       const model = document.getElementById('agentModel'); if (model) AppState.settings.agentModel = model.value.trim();
       const prov = document.getElementById('agentProvider'); if (prov) AppState.settings.agentProvider = prov.value;
+      const mode = document.getElementById('agentApiMode'); if (mode) AppState.settings.apiMode = mode.value || 'managed';
+      const dprov = document.getElementById('agentDirectProvider'); if (dprov) AppState.settings.directProvider = dprov.value || 'gemini';
       AppState.saveSettings();
     },
 
     updateKeyStatus() {
-      const keys = AppState.apiKeys || [];
+      const keys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys : [];
       const el = document.getElementById('agentKeyStatus');
       if (!el) return;
-      el.textContent = keys.length
-        ? `Custom keys: ${keys.length} (#${(AppState.apiKeyIndex % keys.length) + 1})`
-        : 'Apex Studio Managed AI Active';
-      el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
-      el.title = keys.length ? 'Custom multi-key rotation enabled' : 'Using built-in managed AI proxy. Configure custom keys in Settings.';
+      const mode = (AppState.settings && AppState.settings.apiMode) || 'managed';
+      const dprov = (AppState.settings && AppState.settings.directProvider) || 'gemini';
+      if (mode === 'direct') {
+        const name = dprov === 'openrouter' ? 'OpenRouter' : (dprov === 'groq' ? 'Groq' : 'Gemini');
+        if (keys.length) {
+          el.textContent = `Direct ${name} • ${keys.length} key${keys.length===1?'':'s'} (#${(AppState.apiKeyIndex % keys.length) + 1})`;
+          el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
+        } else {
+          el.textContent = `Direct ${name} • API key required`;
+          el.className = 'badge badge-warning !text-[10px] !px-2 !py-0.5';
+        }
+        el.title = 'Direct browser API mode (requests sent from browser to provider endpoint).';
+      } else {
+        el.textContent = keys.length
+          ? `Managed Proxy • BYOK ${keys.length} (#${(AppState.apiKeyIndex % keys.length) + 1})`
+          : 'Managed AI Proxy Active';
+        el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
+        el.title = keys.length ? 'Managed proxy with custom key rotation' : 'Using built-in managed AI proxy (/api/chat).';
+      }
     },
 
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
@@ -371,14 +389,105 @@
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         console.error('Agent send error:', e);
+        // Strip any dangling tool_calls without matching tool responses before persisting state
+        try { if (window.AppState && typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions(); } catch {}
         if (streamBubble) streamBubble.setError(`Error: ${msg}`);
-        else this.addMessage('assistant', `Error: ${msg}`);
+        else this.addMessage('assistant', `Error: ${msg}`, 'error');
       } finally {
         this.setGenerating(false);
       }
     },
 
+    sleep(ms) { return new Promise(r => setTimeout(r, ms)); },
+
+    truncateForModel(text, maxChars = 12000) {
+      const str = String(text == null ? '' : text);
+      if (str.length <= maxChars) return str;
+      return str.slice(0, maxChars) + `\n\n[truncated to ${maxChars} chars; original ${str.length} chars]`;
+    },
+
+    async fetchWithRetry(url, options = {}, retries = 1, delayMs = 1000) {
+      let lastErr = null;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await fetch(url, options);
+        } catch (e) {
+          lastErr = e;
+          const msg = String((e && e.message) || e || '');
+          const transient = e instanceof TypeError || /failed to fetch|networkerror|network request failed|load failed/i.test(msg);
+          if (attempt < retries && transient) {
+            await this.sleep(delayMs);
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw lastErr || new TypeError(`Failed to fetch ${url}`);
+    },
+
+    formatFetchError(err, url, res = null, bodyText = '') {
+      const u = String(url || '(unknown URL)');
+      if (res) {
+        const status = res.status;
+        const statusText = res.statusText ? (' ' + res.statusText) : '';
+        const detail = String(bodyText || '').slice(0, 500);
+        return `HTTP ${status}${statusText} at ${u}${detail ? ': ' + detail : ''}`;
+      }
+      const msg = String((err && err.message) || err || 'Request failed');
+      if (err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(msg)) {
+        return `Network request failed to ${u}: ${msg}`;
+      }
+      return `${msg} (URL: ${u})`;
+    },
+
+    getDirectProviderConfig(dprov) {
+      const p = String(dprov || 'gemini').toLowerCase();
+      if (p === 'openrouter') {
+        return { name: 'OpenRouter', provider: 'openai-compatible', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: 'openai/gpt-4o-mini' };
+      }
+      if (p === 'groq') {
+        return { name: 'Groq', provider: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile' };
+      }
+      // Gemini OpenAI-compatible endpoint (browser-direct)
+      return { name: 'Gemini', provider: 'openai-compatible', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.0-flash' };
+    },
+
+    getLlmTarget() {
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const mode = s.apiMode || 'managed';
+      const endpointOverride = ((document.getElementById('agentEndpoint') || {}).value || '').trim();
+      const modelInput = ((document.getElementById('agentModel') || {}).value || '').trim();
+      const providerSel = ((document.getElementById('agentProvider') || {}).value || 'openai-compatible').trim();
+      const keys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys.filter(k => String(k || '').trim()) : [];
+
+      if (mode === 'direct') {
+        const cfg = this.getDirectProviderConfig(s.directProvider || 'gemini');
+        return {
+          mode: 'direct',
+          provider: endpointOverride ? providerSel : cfg.provider,
+          endpoint: endpointOverride || cfg.endpoint,
+          model: modelInput || cfg.model,
+          keys: keys.length ? keys : [''],
+          requiresKey: true,
+          label: `Direct ${cfg.name}`
+        };
+      }
+
+      // Managed mode
+      const endpoint = endpointOverride || (providerSel === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : '/api/chat');
+      return {
+        mode: 'managed',
+        provider: providerSel || 'openai-compatible',
+        endpoint,
+        model: modelInput || '',
+        keys: keys.length ? keys : [''],
+        requiresKey: providerSel === 'anthropic' || !!endpointOverride,
+        label: endpointOverride ? 'Custom Endpoint' : 'Managed AI Proxy'
+      };
+    },
+
     getEndpoint(provider, override) {
+      // legacy helper (kept for compatibility)
       if (override) return override;
       if (provider === 'anthropic') return 'https://api.anthropic.com/v1/messages';
       if (provider === 'openai-compatible') {
@@ -603,16 +712,20 @@
 
     async callLLM(promptTextOrMessages, opts = {}) {
       this.persistAgentSettings();
-      const provider = (document.getElementById('agentProvider') || {}).value || 'openai-compatible';
-      const model = ((document.getElementById('agentModel') || {}).value || '').trim();
-      const endpointOverride = ((document.getElementById('agentEndpoint') || {}).value || '').trim();
-      const endpoint = this.getEndpoint(provider, endpointOverride);
-      if (!endpoint) throw new Error('No API endpoint configured for selected provider.');
-      const customKeys = (AppState.apiKeys && AppState.apiKeys.length) ? [...AppState.apiKeys] : [];
-      const useManagedProxy = provider === 'openai-compatible' && customKeys.length === 0 && !endpointOverride;
+      const target = this.getLlmTarget();
+      const provider = target.provider || 'openai-compatible';
+      const endpoint = target.endpoint;
+      const model = target.model || '';
+      if (!endpoint) throw new Error('No API endpoint configured. Set API Mode/endpoint in Settings.');
+
+      const customKeys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys.filter(k => String(k || '').trim()) : [];
+      if (target.mode === 'direct' && !customKeys.length) {
+        throw new Error(`Direct ${(AppState.settings && AppState.settings.directProvider) || 'provider'} mode requires an API key in Settings (endpoint: ${endpoint}).`);
+      }
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
       const system = AppState.settings.systemPrompt || '';
+      // Enable SSE streaming (stream: true) for live token rendering by default on OpenAI-compatible endpoints
       const wantStream = opts.stream !== false && provider !== 'anthropic' && !opts.disableStream;
       let lastError = null;
 
@@ -622,16 +735,20 @@
         const body = this.buildRequestBody(provider, model, system, promptTextOrMessages, { stream: wantStream, tools: opts.tools, tool_choice: opts.tool_choice });
         const headers = this.getHeaders(provider, key);
         try {
-          const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
+          // 1 automatic retry after 1s on transient network drops
+          const res = await this.fetchWithRetry(endpoint, { method: 'POST', headers, body: JSON.stringify(body) }, 1, 1000);
+
           if ((res.status === 429 || res.status === 402 || res.status === 403) && customKeys.length > 1) {
             AppState.apiKeyIndex = (idx + 1) % total; this.updateKeyStatus();
-            lastError = new Error(`Rate/auth limit on key index ${idx} (${res.status}). Rotating...`);
+            const t = await res.text().catch(() => '');
+            lastError = new Error(`Rate/auth limit on key index ${idx}: ${this.formatFetchError(null, endpoint, res, t)}`);
             continue;
           }
           if (!res.ok) {
-            const t = await res.text();
-            throw new Error(`${useManagedProxy ? 'Managed proxy error' : 'API error'} ${res.status}: ${t.slice(0, 500)}`);
+            const t = await res.text().catch(() => '');
+            throw new Error(`${target.label || 'API'}: ${this.formatFetchError(null, endpoint, res, t)}`);
           }
+
           const ct = (res.headers.get('content-type') || '').toLowerCase();
           if (wantStream && ct.includes('text/event-stream') && res.body) {
             if (customKeys.length) AppState.apiKeyIndex = idx;
@@ -639,6 +756,7 @@
             const out = await this.readSSEStream(res, opts.onDelta);
             return { text: out.text || '', toolCalls: out.toolCalls || [], raw: null };
           }
+
           // Non-streaming JSON fallback
           const data = await res.json().catch(async () => ({ raw: await res.text().catch(() => '') }));
           if (customKeys.length) AppState.apiKeyIndex = idx;
@@ -648,14 +766,20 @@
           if (opts.onDelta && text) opts.onDelta(text, text);
           return { text: text || '', toolCalls, raw: data };
         } catch (e) {
-          lastError = e;
-          // If tools caused the failure (400/422), retry once without tools
-          const msg = String(e && e.message || '');
+          // Format network errors with exact failing URL
+          if (e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String((e && e.message) || e || ''))) {
+            lastError = new Error(this.formatFetchError(e, endpoint, null, ''));
+          } else {
+            lastError = e;
+          }
+
+          // If tools caused the failure (400/422), retry once without tools (with retry wrapper)
+          const msg = String((lastError && lastError.message) || '');
           if (opts.tools && opts.tools.length && (/\b400\b/.test(msg) || /\b422\b/.test(msg))) {
             try {
               console.warn('LLM call failed with tools, retrying without tools:', msg);
               const retryBody = this.buildRequestBody(provider, model, system, promptTextOrMessages, { stream: wantStream });
-              const retryRes = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(retryBody) });
+              const retryRes = await this.fetchWithRetry(endpoint, { method: 'POST', headers, body: JSON.stringify(retryBody) }, 1, 1000);
               if (retryRes.ok) {
                 const rct = (retryRes.headers.get('content-type') || '').toLowerCase();
                 if (wantStream && rct.includes('text/event-stream') && retryRes.body) {
@@ -672,13 +796,19 @@
                 return { text: rtext || '', toolCalls: [], raw: rdata, toolsStripped: true };
               }
               const rt = await retryRes.text().catch(() => '');
-              lastError = new Error(`${useManagedProxy ? 'Managed proxy error' : 'API error'} ${retryRes.status}: ${rt.slice(0, 500)}`);
-            } catch (re) { lastError = re; }
+              lastError = new Error(`${target.label || 'API'} (no-tools retry): ${this.formatFetchError(null, endpoint, retryRes, rt)}`);
+            } catch (re) {
+              lastError = (re instanceof TypeError || /failed to fetch/i.test(String((re && re.message) || re || '')))
+                ? new Error(this.formatFetchError(re, endpoint, null, ''))
+                : re;
+            }
           }
+
+          if (customKeys.length > 1 && attempt < total - 1) continue;
           if (attempt === total - 1) break;
         }
       }
-      throw lastError || new Error('All API keys failed.');
+      throw lastError || new Error(`All API attempts failed (endpoint: ${endpoint}).`);
     },
 
     collectWorkspaceSummary() {
@@ -729,13 +859,22 @@
     },
 
     async performWebSearch(query) {
-      const res = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, numResults: 5 })
-      });
-      const data = await res.json().catch(() => ({}));
-      return data;
+      const url = '/api/search';
+      try {
+        const res = await this.fetchWithRetry(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, numResults: 5 })
+        }, 1, 1000);
+        if (!res.ok) {
+          const t = await res.text().catch(() => '');
+          return { error: this.formatFetchError(null, url, res, t), results: [] };
+        }
+        const data = await res.json().catch(() => ({}));
+        return data;
+      } catch (e) {
+        return { error: this.formatFetchError(e, url, null, ''), results: [] };
+      }
     },
     formatSearchResults(data) {
       if (!data) return 'No search response.';
@@ -963,7 +1102,7 @@
               messages.push({
                 role: 'tool',
                 tool_call_id: tc.id || `call_${Math.random().toString(36).slice(2)}`,
-                content: String(toolResultText).slice(0, 12000)
+                content: this.truncateForModel(toolResultText, 12000)
               });
             }
           }

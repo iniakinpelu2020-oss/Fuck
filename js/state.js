@@ -31,7 +31,9 @@ Behavior:
     ragK: 6,
     terminalWs: '',
     commandTimeoutSec: 600,
-    webhookUrl: ''
+    webhookUrl: '',
+    apiMode: 'managed',
+    directProvider: 'gemini'
   };
 
   const State = {
@@ -52,6 +54,9 @@ Behavior:
     ensureDefaults() {
       if (!this.settings || typeof this.settings !== 'object' || Array.isArray(this.settings)) this.settings = { ...defaultSettings };
       for (const k of Object.keys(defaultSettings)) { if (this.settings[k] == null) this.settings[k] = defaultSettings[k]; }
+      if (!this.settings.apiMode) this.settings.apiMode = defaultSettings.apiMode;
+      if (!this.settings.directProvider) this.settings.directProvider = defaultSettings.directProvider;
+      if (this.settings.commandTimeoutSec == null) this.settings.commandTimeoutSec = defaultSettings.commandTimeoutSec;
       if (!String(this.settings.webhookUrl || '').trim()) this.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
       if (!Array.isArray(this.vault)) this.vault = [];
       if (!Array.isArray(this.apiKeys)) this.apiKeys = [];
@@ -66,18 +71,71 @@ Behavior:
       return /^Hi — I'm Apex\b/.test(c) && c.includes('your autonomous agent');
     },
 
+    sanitizeChatMessages(msgs) {
+      const arr = Array.isArray(msgs) ? msgs : [];
+      const out = [];
+      for (let i = 0; i < arr.length; i++) {
+        const m = arr[i];
+        if (!m || typeof m !== 'object') continue;
+        if (this.isWelcomeMessage(m)) continue;
+        // Strip dangling assistant tool_calls with no matching tool response before next user/assistant boundary
+        if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+          const ids = new Set(m.tool_calls.map(tc => tc && (tc.id || tc.tool_call_id)).filter(Boolean));
+          const answered = new Set();
+          for (let j = i + 1; j < arr.length; j++) {
+            const t = arr[j];
+            if (!t || typeof t !== 'object') continue;
+            if (t.role === 'tool' && (t.tool_call_id || t.id)) answered.add(t.tool_call_id || t.id);
+            if (t.role === 'assistant' || t.role === 'user' || t.role === 'system') break;
+          }
+          const filteredCalls = m.tool_calls.filter(tc => tc && answered.has(tc.id || tc.tool_call_id));
+          if (filteredCalls.length === 0) {
+            const copy = { ...m };
+            delete copy.tool_calls;
+            delete copy.function_call;
+            out.push(copy);
+          } else if (filteredCalls.length !== m.tool_calls.length) {
+            out.push({ ...m, tool_calls: filteredCalls });
+          } else {
+            out.push(m);
+          }
+          continue;
+        }
+        // Drop orphan tool messages not matched by a preceding assistant tool_call in kept output
+        if (m.role === 'tool') {
+          let hasParent = false;
+          for (let k = out.length - 1; k >= 0; k--) {
+            const p = out[k];
+            if (!p || typeof p !== 'object') continue;
+            if (p.role === 'assistant' && Array.isArray(p.tool_calls)) {
+              hasParent = p.tool_calls.some(tc => tc && (tc.id || tc.tool_call_id) === (m.tool_call_id || m.id));
+              break;
+            }
+            if (p.role === 'user' || p.role === 'system') break;
+          }
+          if (!hasParent) continue;
+        }
+        out.push(m);
+      }
+      return out;
+    },
+
     sanitizeChatSessions() {
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       let changed = false;
       for (const session of this.chatSessions) {
         if (!session || !Array.isArray(session.messages)) continue;
-        const filtered = session.messages.filter(m => !this.isWelcomeMessage(m));
+        const filtered = this.sanitizeChatMessages(session.messages);
         if (filtered.length !== session.messages.length) {
           session.messages = filtered;
           changed = true;
+        } else {
+          for (let i = 0; i < filtered.length; i++) { if (filtered[i] !== session.messages[i]) { session.messages = filtered; changed = true; break; } }
         }
       }
-      if (changed) this.saveChatSessions();
+      if (changed) {
+        try { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions || [])); } catch {}
+      }
       return changed;
     },
 
@@ -90,7 +148,10 @@ Behavior:
     saveMcp() { localStorage.setItem(STORAGE_KEYS.mcp, JSON.stringify(this.mcpServers)); },
 
     // Chat session management
-    saveChatSessions() { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions)); },
+    saveChatSessions() {
+      try { this.sanitizeChatSessions(); } catch {}
+      try { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions || [])); } catch (e) { console.error('saveChatSessions failed', e); }
+    },
     saveActiveChatId(id) { this.activeChatId = id; localStorage.setItem('aether.chat.active.v1', id); },
 
     getChat(id) { if (!Array.isArray(this.chatSessions)) this.chatSessions = []; return this.chatSessions.find(s => s.id === id) || null; },

@@ -194,6 +194,14 @@
       if (btnAgent) btnAgent.addEventListener('click', () => this.setView('agent'));
       const btnOpenSettings = document.getElementById('btnOpenSettings');
       if (btnOpenSettings) btnOpenSettings.addEventListener('click', () => this.openSettings());
+      const btnNewChatTop = document.getElementById('btnNewChat');
+      if (btnNewChatTop && !btnNewChatTop.dataset.boundNewChat) {
+        btnNewChatTop.dataset.boundNewChat = '1';
+        btnNewChatTop.addEventListener('click', () => {
+          const newBtn = document.getElementById('btnDrawerNewChat');
+          if (newBtn) newBtn.click(); else this.createNewChat();
+        });
+      }
 
       // Workspace multi-file upload
       const wsBtn = document.getElementById('btnUploadWorkspaceFiles');
@@ -236,6 +244,20 @@
         AppState.settings.commandTimeoutSec = commandTimeoutSec;
         AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl')?.value || '').trim();
         AppState.settings.githubToken = (document.getElementById('settingGithubToken')?.value || '').trim();
+        const apiModeEl = document.getElementById('agentApiMode'); if (apiModeEl) AppState.settings.apiMode = apiModeEl.value || 'managed';
+        const directProvEl = document.getElementById('agentDirectProvider'); if (directProvEl) AppState.settings.directProvider = directProvEl.value || 'gemini';
+        const ep = document.getElementById('agentEndpoint'); if (ep) AppState.settings.agentEndpoint = (ep.value || '').trim();
+        const model = document.getElementById('agentModel'); if (model) AppState.settings.agentModel = (model.value || '').trim();
+        const prov = document.getElementById('agentProvider'); if (prov) AppState.settings.agentProvider = prov.value || 'openai-compatible';
+        // Persist API keys from Settings modal
+        try {
+          const keysEl = document.getElementById('apiKeysInput');
+          if (keysEl) {
+            const arr = String(keysEl.value || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
+            if (typeof AppState.saveApiKeys === 'function') AppState.saveApiKeys(arr);
+            else AppState.apiKeys = arr;
+          }
+        } catch {}
         AppState.saveSettings();
 
         // Persist MCP Servers configuration from Settings modal so Save Settings does not revert it
@@ -355,6 +377,13 @@
       setVal('settingCommandTimeout', (s.commandTimeoutSec != null ? s.commandTimeoutSec : 600));
       setVal('settingWebhookUrl', s.webhookUrl || '');
       setVal('settingGithubToken', s.githubToken || '');
+      setVal('agentApiMode', s.apiMode || 'managed');
+      setVal('agentDirectProvider', s.directProvider || 'gemini');
+      setVal('agentEndpoint', s.agentEndpoint || '');
+      setVal('agentModel', s.agentModel || '');
+      setVal('agentProvider', s.agentProvider || 'openai-compatible');
+      const keysEl = document.getElementById('apiKeysInput');
+      if (keysEl && Array.isArray(AppState.apiKeys)) keysEl.value = AppState.apiKeys.join('\n');
 
       // Restore MCP Servers configuration so Settings modal reflects persisted state
       const mcpInput = document.getElementById('mcpConfigInput');
