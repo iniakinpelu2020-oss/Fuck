@@ -531,58 +531,6 @@
       return (sections || []).find(sec => lower.includes(String(sec.name || '').toLowerCase())) || null;
     },
 
-    extractGoBuildId(bytes, sections) {
-      const out = [];
-      const seen = new Set();
-      const add = (v) => {
-        const str = String(v == null ? '' : v).trim().replace(/^["']|["']$/g, '');
-        if (!str || seen.has(str)) return;
-        seen.add(str);
-        out.push(str);
-      };
-      try {
-        const needle = 'Go build ID:';
-        const max = bytes.length;
-        const step = 1 << 16; // 64KB
-        let carry = '';
-        for (let i = 0; i < max; i += step) {
-          const end = Math.min(max, i + step);
-          let chunk = carry;
-          for (let j = i; j < end; j++) chunk += String.fromCharCode(bytes[j]);
-          carry = chunk.slice(-64);
-          let idx = 0;
-          while (true) {
-            const p = chunk.indexOf(needle, idx);
-            if (p < 0) break;
-            const tail = chunk.slice(p + needle.length, p + needle.length + 260);
-            const m = tail.match(/^\s*"?([^\s"'\x00\r\n]{4,240})"?/);
-            if (m && m[1]) add(m[1]);
-            idx = p + needle.length;
-          }
-        }
-      } catch {}
-      try {
-        // Also inspect build-id note/info sections for readable IDs
-        const noteSec = this.getSectionByName(sections || [], ['.note.go.buildid', '__go_buildinfo', '.go.buildinfo']);
-        if (noteSec && noteSec.offset < bytes.length && noteSec.size > 0) {
-          const start = Math.max(0, noteSec.offset);
-          const end = Math.min(bytes.length, noteSec.offset + noteSec.size);
-          const runs = this.scanStringsInRange(bytes, start, end, 4, 40);
-          for (const r of runs) {
-            const t = String(r.text || '').trim();
-            if (!t) continue;
-            if (/Go build ID/i.test(t)) {
-              const m = t.match(/Go build ID:\s*"?([^\s"'\x00\r\n]{4,240})"?/i);
-              if (m && m[1]) add(m[1]); else add(t);
-            } else if (/^([A-Za-z0-9/_\-+=:.]{8,}|[a-f0-9]{16,})$/.test(t)) {
-              add(t);
-            }
-          }
-        }
-      } catch {}
-      return out;
-    },
-
     async scanDataAndOverlayForMagics(bytes, buf, sections, overlay) {
       const lines = [];
       const dataSec = this.getSectionByName(sections, ['.data', '__data', 'DATA']);

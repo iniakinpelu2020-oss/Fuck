@@ -258,6 +258,9 @@
             else AppState.apiKeys = arr;
           }
         } catch {}
+        if (AppState.settings.apiMode === 'direct' && AppState.settings.directProvider === 'custom' && !String(AppState.settings.agentEndpoint || '').trim()) {
+          if (window.Utils && Utils.toast) Utils.toast('Custom (OpenAI-compatible) Direct Provider requires an API endpoint override. Enter your base URL (e.g. https://api.example.com/v1) in Settings.', 'error');
+        }
         AppState.saveSettings();
 
         // Persist MCP Servers configuration from Settings modal so Save Settings does not revert it

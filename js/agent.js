@@ -92,17 +92,24 @@
       const el = document.getElementById('agentKeyStatus');
       if (!el) return;
       const mode = (AppState.settings && AppState.settings.apiMode) || 'managed';
-      const dprov = (AppState.settings && AppState.settings.directProvider) || 'gemini';
+      const dprov = String((AppState.settings && AppState.settings.directProvider) || 'gemini').toLowerCase();
       if (mode === 'direct') {
-        const name = dprov === 'openrouter' ? 'OpenRouter' : (dprov === 'groq' ? 'Groq' : 'Gemini');
-        if (keys.length) {
+        const cfg = (typeof this.getDirectProviderConfig === 'function') ? this.getDirectProviderConfig(dprov) : { name: dprov };
+        const name = cfg && cfg.name ? cfg.name : (dprov === 'openrouter' ? 'OpenRouter' : (dprov === 'groq' ? 'Groq' : (dprov === 'custom' ? 'Custom (OpenAI-compatible)' : 'Gemini')));
+        const endpointOverride = String((AppState.settings && AppState.settings.agentEndpoint) || ((document.getElementById('agentEndpoint') || {}).value || '')).trim();
+        if (dprov === 'custom' && !endpointOverride) {
+          el.textContent = `Direct ${name} • endpoint required`;
+          el.className = 'badge badge-warning !text-[10px] !px-2 !py-0.5';
+          el.title = 'Custom Direct Provider requires an API endpoint override (base URL) in Settings.';
+        } else if (keys.length) {
           el.textContent = `Direct ${name} • ${keys.length} key${keys.length===1?'':'s'} (#${(AppState.apiKeyIndex % keys.length) + 1})`;
           el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
+          el.title = 'Direct browser API mode (requests sent from browser to provider endpoint).';
         } else {
           el.textContent = `Direct ${name} • API key required`;
           el.className = 'badge badge-warning !text-[10px] !px-2 !py-0.5';
+          el.title = 'Direct browser API mode requires an API key in Settings.';
         }
-        el.title = 'Direct browser API mode (requests sent from browser to provider endpoint).';
       } else {
         el.textContent = keys.length
           ? `Managed Proxy • BYOK ${keys.length} (#${(AppState.apiKeyIndex % keys.length) + 1})`
@@ -448,8 +455,25 @@
       if (p === 'groq') {
         return { name: 'Groq', provider: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile' };
       }
+      if (p === 'custom') {
+        return { name: 'Custom (OpenAI-compatible)', provider: 'openai-compatible', endpoint: '', model: '', requiresEndpointOverride: true };
+      }
       // Gemini OpenAI-compatible endpoint (browser-direct)
       return { name: 'Gemini', provider: 'openai-compatible', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-3.8-flash' };
+    },
+
+    normalizeCustomDirectEndpoint(url) {
+      let u = String(url || '').trim();
+      if (!u) return '';
+      u = u.replace(/\s+/g, '').replace(/\/+$/, '');
+      if (!u) return '';
+      if (/\/chat\/completions$/i.test(u)) return u;
+      // If user pastes a base /v1 URL, append /chat/completions automatically
+      if (/\/v1$/i.test(u)) return u + '/chat/completions';
+      // If it already contains /chat/completions path segment, keep as-is
+      if (/\/chat\/completions(\/|\?|#|$)/i.test(u)) return u.replace(/\/+$/, '');
+      // Otherwise append /chat/completions to the provided base URL
+      return u + '/chat/completions';
     },
 
     getLlmTarget() {
@@ -461,15 +485,38 @@
       const keys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys.filter(k => String(k || '').trim()) : [];
 
       if (mode === 'direct') {
-        const cfg = this.getDirectProviderConfig(s.directProvider || 'gemini');
+        const dprov = String(s.directProvider || 'gemini').toLowerCase();
+        const cfg = this.getDirectProviderConfig(dprov);
+        let provider = cfg.provider || 'openai-compatible';
+        let endpoint = endpointOverride || cfg.endpoint || '';
+        let model = modelInput || cfg.model || '';
+        let endpointMissingForCustom = false;
+
+        if (dprov === 'custom') {
+          provider = 'openai-compatible';
+          if (!endpointOverride) {
+            endpointMissingForCustom = true;
+            endpoint = '';
+          } else {
+            endpoint = this.normalizeCustomDirectEndpoint(endpointOverride);
+          }
+          // Use configured Model name for custom direct provider
+          model = modelInput || '';
+        } else if (endpointOverride) {
+          // Advanced override for built-in direct providers
+          provider = providerSel || provider;
+        }
+
         return {
           mode: 'direct',
-          provider: endpointOverride ? providerSel : cfg.provider,
-          endpoint: endpointOverride || cfg.endpoint,
-          model: modelInput || cfg.model,
+          provider,
+          endpoint,
+          model,
           keys: keys.length ? keys : [''],
           requiresKey: true,
-          label: `Direct ${cfg.name}`
+          label: `Direct ${cfg.name}`,
+          directProvider: dprov,
+          endpointMissingForCustom
         };
       }
 
@@ -482,7 +529,9 @@
         model: modelInput || '',
         keys: keys.length ? keys : [''],
         requiresKey: providerSel === 'anthropic' || !!endpointOverride,
-        label: endpointOverride ? 'Custom Endpoint' : 'Managed AI Proxy'
+        label: endpointOverride ? 'Custom Endpoint' : 'Managed AI Proxy',
+        directProvider: null,
+        endpointMissingForCustom: false
       };
     },
 
@@ -716,11 +765,17 @@
       const provider = target.provider || 'openai-compatible';
       const endpoint = target.endpoint;
       const model = target.model || '';
+
+      if (target.mode === 'direct' && String(target.directProvider || '').toLowerCase() === 'custom' && !String(((document.getElementById('agentEndpoint') || {}).value || '')).trim()) {
+        throw new Error('Custom (OpenAI-compatible) Direct Provider requires an API endpoint override. Enter your base URL (e.g. https://api.example.com/v1) in Settings.');
+      }
       if (!endpoint) throw new Error('No API endpoint configured. Set API Mode/endpoint in Settings.');
 
       const customKeys = Array.isArray(AppState.apiKeys) ? AppState.apiKeys.filter(k => String(k || '').trim()) : [];
       if (target.mode === 'direct' && !customKeys.length) {
-        throw new Error(`Direct ${(AppState.settings && AppState.settings.directProvider) || 'provider'} mode requires an API key in Settings (endpoint: ${endpoint}).`);
+        const dprov = String(target.directProvider || (AppState.settings && AppState.settings.directProvider) || 'provider').toLowerCase();
+        const dname = dprov === 'custom' ? 'Custom (OpenAI-compatible)' : (dprov === 'openrouter' ? 'OpenRouter' : (dprov === 'groq' ? 'Groq' : (dprov === 'gemini' ? 'Gemini' : dprov)));
+        throw new Error(`Direct ${dname} mode requires an API key in Settings (endpoint: ${endpoint || '(not set)'}).`);
       }
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;

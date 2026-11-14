@@ -689,6 +689,59 @@
       return { path, attachment: null, info, extractedPaths };
     },
 
+    buildAgentAttachmentContext(attachments) {
+      const list = Array.isArray(attachments) ? attachments : [];
+      if (!list.length) return '';
+      const maxTotal = 12000;
+      const perFile = 4000;
+      const cap = (str, n) => {
+        const s = String(str == null ? '' : str);
+        if (s.length <= n) return s;
+        return s.slice(0, n) + `\n...[truncated ${s.length - n} chars]`;
+      };
+      let out = `--- Attached Files (${list.length}) ---\n`;
+      let used = out.length;
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i] || {};
+        const name = String(a.name || 'file');
+        const wpath = String(a.path || name);
+        const sizeStr = (typeof fmtBytes === 'function') ? fmtBytes(Number(a.size || 0)) : (String(a.size || 0) + ' B');
+        const mime = String(a.mime || '');
+        const ftype = String(a.fileType || a.detectedType || a.kind || 'file');
+        const ready = String(a.readyLabel || ('Ready (' + ftype + ')'));
+        const parts = [];
+        parts.push(`[${i + 1}] ${name}`);
+        parts.push(`Workspace path: ${wpath}`);
+        parts.push(`Size: ${sizeStr}${mime ? ' | MIME: ' + mime : ''}`);
+        parts.push(`Type: ${ftype} | ${ready}`);
+
+        let body = '';
+        if (a.kind === 'text') {
+          body = String(a.content != null ? a.content : (a.report || ''));
+        } else if (a.kind === 'image') {
+          body = String(a.report || ('[Image file: ' + name + ']'));
+          if (a.dataUrl) body += `\n[Image data URL available in UI: ${String(a.dataUrl).length} chars]`;
+        } else {
+          body = String((a.report != null && a.report !== '') ? a.report : (a.content || ''));
+        }
+        if (Array.isArray(a.extractedPaths) && a.extractedPaths.length) {
+          const shown = a.extractedPaths.slice(0, 60).map(p => '- ' + p).join('\n');
+          body += `\nExtracted workspace files (${a.extractedPaths.length}):\n${shown}`;
+          if (a.extractedPaths.length > 60) body += `\n- ... (${a.extractedPaths.length - 60} more)`;
+        }
+        body = cap(body, perFile);
+        const block = parts.join('\n') + '\n' + body + '\n\n';
+
+        if (used + block.length > maxTotal) {
+          out += `\n...[attachment context truncated to ~${maxTotal} chars; ${list.length - i} file(s) omitted/partial]\n`;
+          return out;
+        }
+        out += block;
+        used += block.length;
+      }
+      return out;
+    },
+
   };
 
 
