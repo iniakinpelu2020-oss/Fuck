@@ -132,10 +132,6 @@ export async function onRequestPost(context) {
     const body = { ...payload, model: attempt.model };
     if (!Object.prototype.hasOwnProperty.call(body, 'stream')) body.stream = wantStream;
     if (body.reasoning_effort == null) body.reasoning_effort = 'low';
-    // Fast chat for Gemini 3.8 Flash: disable/minimize thinking to avoid 15s+ latency/timeouts.
-    if (/gemini-3\.8-flash/i.test(String(attempt.model || ''))) {
-      if (body.thinkingConfig == null) body.thinkingConfig = { thinkingBudget: 0 };
-    }
 
     let res;
     try {
