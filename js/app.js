@@ -664,9 +664,18 @@
     else if (ext === 'dmg') { kind = 'binary'; fileType = 'dmg'; }
     else { fileType = ext || (isPdf ? 'pdf' : 'binary'); kind = isPdf ? 'pdf' : 'binary'; }
 
+    let readyLabel = null;
+    const isREAType = ['exe','dll','elf','so','bin','apk'].includes(ext);
+    if (isREAType) {
+      try { report = reaBuildReport(file, report); } catch (_) { /* keep base report */ }
+      fileType = ext || fileType;
+      readyLabel = `Ready (REA ${fileType})`;
+    }
+
     return {
       ok: true, file, name, size, mime: mimeRaw || 'application/octet-stream', ext,
       fileType, detectedType: fileType, kind,
+      readyLabel,
       report,
       contentForWorkspace: report,
       contentForAgent: report
@@ -674,6 +683,194 @@
   }
 
   window.inspectFileInBrowser = inspectFileInBrowser;
+
+
+  function reaIsAutoTriggerFile(fileOrName) {
+    const name = String((fileOrName && fileOrName.name) ? fileOrName.name : (fileOrName || '')).toLowerCase();
+    const ext = (name.includes('.') ? name.split('.').pop() : '');
+    return ['exe', 'dll', 'elf', 'so', 'bin', 'apk'].includes(ext);
+  }
+
+  function reaExtractSection(base, heading, maxLen) {
+    if (!base) return '';
+    const idx = base.indexOf(heading);
+    if (idx < 0) return '';
+    let rest = base.slice(idx + heading.length).replace(/^\s*\n/, '');
+    const stops = ['\n=== Interesting Findings ===', '\n--- PE Section Size Flags ---', '\n--- Extracted Strings', '\n--- Hex Preview', '\n\nArchive entries:', '\n\nPE/EXE inspection:', '\n\nDMG/UDIF inspection:', '\n\nNo container-specific parser'];
+    let end = rest.length;
+    for (const st of stops) {
+      const j = rest.indexOf(st);
+      if (j >= 0 && j < end) end = j;
+    }
+    let out = rest.slice(0, end).trim();
+    if (maxLen && out.length > maxLen) out = out.slice(0, maxLen) + '\n…(truncated)';
+    return out;
+  }
+
+  function reaBuildReport(file, baseReport) {
+    const name = String((file && file.name) || 'binary');
+    const size = Number((file && file.size) || 0);
+    const mime = String((file && file.type) || 'application/octet-stream');
+    const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase() || 'bin';
+    const fmtBytes = (window.Utils && Utils.formatBytes) ? Utils.formatBytes : (n => n + ' B');
+    const base = String(baseReport || '');
+
+    const getLine = (prefix) => {
+      const esc = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('^' + esc + '\\s*(.*)$', 'm');
+      const m = base.match(re);
+      return m ? m[1].trim() : '';
+    };
+    const signature = getLine('Detected signature:') || '(unknown)';
+    const fingerprint = getLine('SHA-like fingerprint:') || '(unavailable)';
+
+    const interesting = reaExtractSection(base, '=== Interesting Findings ===', 6000);
+    const stringsSample = reaExtractSection(base, '--- Extracted Strings (sample, >= 7 chars, noise filtered) ---', 4000);
+    const hexPreview = reaExtractSection(base, '--- Hex Preview (first 256 bytes) ---', 1200);
+    const peSectionFlags = reaExtractSection(base, '--- PE Section Size Flags ---', 1200);
+
+    let structure = base;
+    const cut = structure.indexOf('\n=== Interesting Findings ===');
+    if (cut >= 0) structure = structure.slice(0, cut);
+    structure = structure.replace(/^Name:.*\n?/m, '').replace(/^Size:.*\n?/m, '').replace(/^MIME:.*\n?/m, '').replace(/^SHA-like fingerprint:.*\n?/m, '').replace(/^Detected signature:.*\n?/m, '').trim();
+    if (structure.length > 6000) structure = structure.slice(0, 6000) + '\n…(truncated)';
+
+    const observations = [];
+    observations.push(`- File name: ${name} (${fmtBytes(size)}, ${size} bytes, MIME: ${mime || 'unknown'})`);
+    observations.push(`- Static signature/fingerprint: ${signature}; ${fingerprint}`);
+    if (/PE\/EXE\/DLL/i.test(signature) || /\.exe$|\.dll$/i.test(name)) observations.push('- PE container indicators observed (DOS MZ / PE signature parsed in base inspection where available).');
+    if (/ZIP\/APK\/JAR\/IPA/i.test(signature) || /\.apk$|\.zip$|\.jar$|\.ipa$/i.test(name)) observations.push('- Archive/package container indicators observed (ZIP/APK-style entries/manifests inspected where available).');
+    if (/ELF/i.test(signature) || /\.elf$|\.so$/i.test(name)) observations.push('- ELF/shared-object indicators observed by name/signature context; browser-native deep ELF parsing is limited to available static evidence.');
+    if (/DMG\/UDIF/i.test(signature) || /\.dmg$/i.test(name)) observations.push('- Apple disk image indicators observed (UDIF/koly metadata where available).');
+    if (/\.bin$/i.test(name)) observations.push('- Generic binary blob; format inferred only from header/strings/hex evidence.');
+    if (/No container-specific parser matched/i.test(base)) observations.push('- No specialized container parser matched; analysis is based on generic header/strings/hex evidence.');
+    if (peSectionFlags) observations.push('- One or more PE sections show large raw size ratios (possible embedded payload/installer/packed data) — see evidence.');
+
+    const inferences = [];
+    const apiSection = interesting.split('Sensitive / Network / Process Windows APIs')[1] || '';
+    if (interesting && /Sensitive \/ Network \/ Process Windows APIs/i.test(interesting) && !/\(none found\)/.test(apiSection)) {
+      inferences.push('- Presence of process/memory/network/registry API strings suggests capabilities consistent with those APIs (static string evidence; not proof of execution).');
+    }
+    const compilerSection = interesting.split('Compiler / Runtime Signatures')[1] || '';
+    if (interesting && /Compiler \/ Runtime Signatures/i.test(interesting) && !/\(none found\)/.test(compilerSection)) {
+      inferences.push('- Compiler/runtime/toolchain markers were observed; they may indicate build environment or packaging framework (heuristic).');
+    }
+    if (/UPX!|UPX0|UPX1/i.test(base)) inferences.push('- UPX markers suggest packing/compression; unpacking may be required for deeper inspection.');
+    if (/\.data|\.rsrc/i.test(peSectionFlags)) inferences.push('- Large data/resource sections may contain embedded archives, installers, or resources worth carving/inspecting.');
+    if (!inferences.length) inferences.push('- No strong heuristic inferences beyond directly observed static artifacts.');
+
+    const unknowns = [
+      '- Browser-native analysis only: no external decompiler/disassembler engines (Ghidra/Hopper/IDA/rizin) executed and no symbol recovery beyond observed strings/headers.',
+      '- No dynamic execution, sandbox tracing, or network observation performed.',
+      '- Packed, encrypted, or obfuscated regions may hide code/data; contents not unpacked or decrypted here.',
+      '- For managed/.NET, stripped ELF, or complex formats, deeper semantic recovery (functions, CFG, decompilation) is unavailable in-browser.',
+      '- Archive entries/manifests shown are parsed statically; embedded binaries may require separate inspection.'
+    ];
+
+    const nextProbes = [
+      '1. Trace relevant capability strings/import hints to suspected feature areas (network, filesystem, crypto, process, persistence) and record offset/section evidence where available.',
+      '2. If PE: inspect entry point, imports/exports, resources, overlay, and high-entropy/large sections for embedded payloads or installers.',
+      '3. If archive/APK: review manifests, scripts, native libraries (.so), DEX/classes, and config files for permissions/endpoints/entry points.',
+      '4. Search extracted strings for URLs, domains, registry keys, file paths, command lines, and error messages tied to behavior of interest.',
+      '5. For deeper reverse engineering, analyze in authorized environments with native RE tools (Ghidra/IDA/Hopper/rizin) and, if needed, controlled dynamic instrumentation.',
+      '6. Validate hypotheses against additional static/dynamic evidence; keep confirmed facts, inferences, and unknowns separate.'
+    ];
+
+    const prompt = [
+      'Use REA (Reverse Engineering Assistant) workflow on this artifact.',
+      '1) Identify format, architecture/runtime hints, sections/entries, imports/capabilities, strings/IOCs, and likely entry points from static evidence.',
+      '2) Cite evidence (offsets, section names, header fields, string hits) for every claim.',
+      '3) Separate Observations (confirmed), Inferences (heuristic), and Unknowns/limits.',
+      '4) Propose focused next probes; do not claim decompilation or runtime behavior without evidence.'
+    ].join('\n');
+
+    const parts = [];
+    parts.push('# REA Native Analysis (Browser)');
+    parts.push('');
+    parts.push('## Target');
+    parts.push(`- Name: ${name}`);
+    parts.push(`- Extension: .${ext}`);
+    parts.push(`- Size: ${fmtBytes(size)} (${size} bytes)`);
+    parts.push(`- MIME: ${mime || 'unknown'}`);
+    parts.push(`- Detected signature: ${signature}`);
+    parts.push(`- Fingerprint: ${fingerprint}`);
+    parts.push('');
+    parts.push('## Structured REA Inspection Prompt');
+    parts.push(prompt);
+    parts.push('');
+    parts.push('## Observed Format & Structure (static evidence)');
+    parts.push(structure || '(no container-specific structure extracted)');
+    parts.push('');
+    parts.push('## Capability & IOC Findings (extracted evidence)');
+    parts.push(interesting || '(no categorized findings)');
+    parts.push('');
+    if (peSectionFlags) {
+      parts.push('## PE Section Size Flags');
+      parts.push(peSectionFlags);
+      parts.push('');
+    }
+    parts.push('## Extracted Strings (sample)');
+    parts.push(stringsSample || '(none found)');
+    parts.push('');
+    parts.push('## Hex Preview (first 256 bytes)');
+    parts.push(hexPreview || '(unavailable)');
+    parts.push('');
+    parts.push('## Observations (confirmed)');
+    parts.push(observations.join('\n'));
+    parts.push('');
+    parts.push('## Inferences (heuristic)');
+    parts.push(inferences.join('\n'));
+    parts.push('');
+    parts.push('## Unknowns / Limits');
+    parts.push(unknowns.join('\n'));
+    parts.push('');
+    parts.push('## Suggested Next Probes');
+    parts.push(nextProbes.join('\n'));
+
+    return parts.join('\n');
+  }
+
+  async function analyzeFileWithREA(file) {
+    const target = file || (window.BinaryInspector && BinaryInspector.selectedFile);
+    if (!target) throw new Error('No binary file selected');
+    let base = '';
+    if (window.BinaryInspector && typeof BinaryInspector.analyzeToText === 'function') {
+      base = await BinaryInspector.analyzeToText(target);
+    } else {
+      const info = await inspectFileInBrowser(target);
+      base = String((info && (info.report || info.contentForAgent || info.text)) || '');
+    }
+    return reaBuildReport(target, base);
+  }
+
+  async function analyzeSelectedBinaryWithREA() {
+    const out = document.getElementById('binaryOutput');
+    if (!window.BinaryInspector || !BinaryInspector.selectedFile) {
+      if (window.Utils) Utils.toast('Select a binary/package first', 'error');
+      return null;
+    }
+    const file = BinaryInspector.selectedFile;
+    if (out) out.textContent = `Analyzing ${file.name} with REA (browser-native)...\n`;
+    try {
+      const report = await analyzeFileWithREA(file);
+      if (out) out.textContent = report;
+      if (window.BinaryInspector) {
+        BinaryInspector.lastAnalysis = { name: file.name, text: report, at: Date.now(), mode: 'rea' };
+      }
+      if (window.Utils) Utils.toast('REA analysis complete', 'success');
+      return report;
+    } catch (e) {
+      const msg = `REA analysis failed: ${e && e.message ? e.message : e}`;
+      if (out) out.textContent = msg;
+      if (window.Utils) Utils.toast(msg, 'error');
+      throw e;
+    }
+  }
+
+  App.reaIsAutoTriggerFile = reaIsAutoTriggerFile;
+  App.analyzeFileWithREA = analyzeFileWithREA;
+  App.buildREAReport = reaBuildReport;
+  App.analyzeSelectedBinaryWithREA = analyzeSelectedBinaryWithREA;
 
   window.addEventListener('DOMContentLoaded', () => App.init());
 })();

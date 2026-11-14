@@ -676,7 +676,7 @@
           mime: info.mime || mime || '',
           fileType,
           detectedType: fileType,
-          readyLabel: 'Ready (' + fileType + ')',
+          readyLabel: info.readyLabel || ('Ready (' + fileType + ')'),
           report,
           content: isText ? String(info.text || '') : '',
           dataUrl: info.dataUrl || '',

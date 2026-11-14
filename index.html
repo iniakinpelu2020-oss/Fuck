@@ -147,11 +147,12 @@
               <div id="binaryDropZone" class="drop-zone">
                 <svg class="w-8 h-8 text-slate-500 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M20 16.5v1a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-1"/></svg>
                 <div class="text-sm text-slate-300 font-medium">Drop binary or package here</div>
-                <div class="text-[11px] text-slate-500 mt-1">.apk, .exe, .dmg, .zip, .ipa</div>
-                <input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dmg,.zip,.ipa" />
+                <div class="text-[11px] text-slate-500 mt-1">.apk, .exe, .dll, .elf, .so, .bin, .dmg, .zip, .ipa</div>
+                <input id="binaryFileInput" type="file" class="hidden" accept=".apk,.exe,.dll,.elf,.so,.bin,.dmg,.zip,.ipa,*/*" />
               </div>
-              <div class="grid grid-cols-2 gap-2">
+              <div class="grid grid-cols-3 gap-2">
                 <button id="btnAnalyzeBinary" class="btn-primary">Analyze Binary</button>
+                <button id="btnAnalyzeBinaryREA" class="btn-secondary" title="Structured REA (Reverse Engineering Assistant) analysis">Analyze with REA</button>
                 <button id="btnClearBinary" class="btn-secondary">Clear</button>
               </div>
             </div>

@@ -4,13 +4,23 @@
     init() {
       const dz = document.getElementById('binaryDropZone');
       const input = document.getElementById('binaryFileInput');
-      dz.addEventListener('click', () => input.click());
-      dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('border-accent'); });
-      dz.addEventListener('dragleave', () => dz.classList.remove('border-accent'));
-      dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('border-accent'); if (e.dataTransfer.files[0]) this.setFile(e.dataTransfer.files[0]); });
-      input.addEventListener('change', () => { if (input.files[0]) this.setFile(input.files[0]); });
-      document.getElementById('btnAnalyzeBinary').addEventListener('click', () => this.analyze());
-      document.getElementById('btnClearBinary').addEventListener('click', () => this.clear());
+      if (dz) dz.addEventListener('click', () => input && input.click());
+      if (dz) dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('border-accent'); });
+      if (dz) dz.addEventListener('dragleave', () => dz.classList.remove('border-accent'));
+      if (dz) dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('border-accent'); if (e.dataTransfer.files && e.dataTransfer.files[0]) this.setFile(e.dataTransfer.files[0]); });
+      if (input) input.addEventListener('change', () => { if (input.files && input.files[0]) this.setFile(input.files[0]); });
+      const btnAnalyze = document.getElementById('btnAnalyzeBinary');
+      if (btnAnalyze) btnAnalyze.addEventListener('click', () => this.analyze());
+      const btnRea = document.getElementById('btnAnalyzeBinaryREA');
+      if (btnRea) btnRea.addEventListener('click', async () => {
+        if (window.App && typeof App.analyzeSelectedBinaryWithREA === 'function') {
+          await App.analyzeSelectedBinaryWithREA();
+        } else {
+          Utils.toast('REA analyzer unavailable', 'error');
+        }
+      });
+      const btnClear = document.getElementById('btnClearBinary');
+      if (btnClear) btnClear.addEventListener('click', () => this.clear());
     },
     setFile(file) {
       this.selectedFile = file;
