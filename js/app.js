@@ -178,28 +178,29 @@
       const btnTerminal = document.getElementById('btnToggleTerminal');
       if (btnTerminal) btnTerminal.addEventListener('click', () => {
         this.setView('editor');
-        TerminalPanel.toggle();
+        if (window.TerminalPanel && TerminalPanel.toggle) TerminalPanel.toggle();
       });
       const btnExplorer = document.getElementById('btnPanelExplorer');
       const btnAgent = document.getElementById('btnPanelAgent');
       if (btnExplorer) btnExplorer.addEventListener('click', () => this.setView('workspace'));
       if (btnAgent) btnAgent.addEventListener('click', () => this.setView('agent'));
-      document.getElementById('btnOpenSettings').addEventListener('click', () => this.openSettings());
+      const btnOpenSettings = document.getElementById('btnOpenSettings');
+      if (btnOpenSettings) btnOpenSettings.addEventListener('click', () => this.openSettings());
     },
 
     bindSettings() {
-      document.getElementById('btnCloseSettings').addEventListener('click', () => this.closeSettings());
+      document.getElementById('btnCloseSettings')?.addEventListener('click', () => this.closeSettings());
       const cancel = document.getElementById('btnCloseSettingsSecondary');
       if (cancel) cancel.addEventListener('click', () => this.closeSettings());
-      document.getElementById('settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') this.closeSettings(); });
-      document.getElementById('btnSaveSettings').addEventListener('click', () => {
+      document.getElementById('settingsModal')?.addEventListener('click', (e) => { if (e.target.id === 'settingsModal') this.closeSettings(); });
+      document.getElementById('btnSaveSettings')?.addEventListener('click', () => {
         // Agent / RAG / runtime settings
-        AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt').value || '');
-        AppState.settings.ragK = Number(document.getElementById('settingRagK').value || 6);
-        const terminalUrl = (document.getElementById('settingTerminalWs').value || '').trim();
+        AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt')?.value || '');
+        AppState.settings.ragK = Number(document.getElementById('settingRagK')?.value || 6);
+        const terminalUrl = (document.getElementById('settingTerminalWs')?.value || '').trim();
         AppState.settings.terminalWs = terminalUrl;
-        AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl').value || '').trim();
-        AppState.settings.githubToken = (document.getElementById('settingGithubToken').value || '').trim();
+        AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl')?.value || '').trim();
+        AppState.settings.githubToken = (document.getElementById('settingGithubToken')?.value || '').trim();
         AppState.saveSettings();
 
         // Persist MCP Servers configuration from Settings modal so Save Settings does not revert it
@@ -232,7 +233,7 @@
         }
 
         this.closeSettings();
-        Utils.toast('Settings saved', 'success');
+        if (window.Utils && Utils.toast) Utils.toast('Settings saved', 'success');
       });
     },
 
