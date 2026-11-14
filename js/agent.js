@@ -177,8 +177,8 @@
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
 
-      // Remove transient empty-state welcome placeholder when a real message is added
-      if (!opts.keepWelcomePlaceholder) {
+      // Only remove welcome placeholder when explicitly requested (e.g. full re-render/reset)
+      if (opts.removeWelcomePlaceholder) {
         wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
       }
 
@@ -220,8 +220,10 @@
     createStreamingAssistantBubble(meta = 'chat', opts = {}) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
-      // Remove transient empty-state welcome placeholder when a real response begins
-      wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
+      // Keep persistent welcome card at top; only remove when explicitly requested
+      if (opts.removeWelcomePlaceholder) {
+        wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
+      }
       const div = document.createElement('div');
       div.className = 'chat-msg assistant streaming';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';

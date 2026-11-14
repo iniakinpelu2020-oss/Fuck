@@ -478,7 +478,7 @@
       const session = AppState.getChat(AppState.activeChatId);
       if (!session) return;
 
-      // Strip/filter any previously saved welcome messages from old sessions
+      // Strip/filter any previously saved welcome messages from old sessions (never persist greeting)
       const isWelcome = (m) => m && m.role === 'assistant' && /^Hi — I'm Apex\b/.test(String(m.content || '')) && String(m.content || '').includes('your autonomous agent');
       const messages = Array.isArray(session.messages) ? session.messages.filter(m => !isWelcome(m)) : [];
       if (Array.isArray(session.messages) && messages.length !== session.messages.length) {
@@ -486,25 +486,22 @@
         AppState.saveChatSessions();
       }
 
-      if (!messages.length) {
-        // Temporary empty-state placeholder only (never saved to localStorage)
-        Agent.addMessage(
-          'assistant',
-          'Hi — I\'m Apex Studio, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings from the drawer (☰) if needed.',
-          '',
-          [],
-          { persist: false, welcomePlaceholder: true, keepWelcomePlaceholder: true }
-        );
-        this.renderChatHistory();
-        return;
-      }
+      // Always render the single welcome card as the first element (temporary, never saved), once per render
+      Agent.addMessage(
+        'assistant',
+        'Hi — I\'m Apex Studio, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings from the drawer (☰) if needed.',
+        '',
+        [],
+        { persist: false, welcomePlaceholder: true, keepWelcomePlaceholder: true }
+      );
 
-      // Restore real conversation messages without re-persisting them
+      // Render session messages in chronological order (real conversation only), without re-persisting
       messages.forEach(m => {
         if (!m) return;
         const role = m.role || 'assistant';
         Agent.addMessage(role, m.content, m.meta || '', m.badges || [], { persist: false, keepWelcomePlaceholder: true });
       });
+
       this.renderChatHistory();
     },
 
