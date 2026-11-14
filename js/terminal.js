@@ -608,18 +608,25 @@
     },
 
     async execRemoteHttp(command, opts = {}) {
-      const url = this.getHttpRunnerUrl();
-      if (!url) {
+      const runnerUrl = this.getHttpRunnerUrl();
+      if (!runnerUrl) {
         return { ok: false, stdout: '', stderr: 'Remote runner URL not configured', output: 'Remote runner URL not configured', mode: 'remote-http', code: 1 };
       }
       const timeoutMs = Number(opts.timeoutMs || 120000);
       const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
       try {
-        const res = await fetch(url, {
+        // Proxy via Cloudflare Worker to avoid browser CORS/preflight and Authorization header restrictions
+        const token = (window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '';
+        const res = await fetch('/api/exec', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: String(command || '') }),
+          body: JSON.stringify({
+            runnerUrl,
+            command: String(command || ''),
+            token: String(token || ''),
+            ...(opts.cwd ? { cwd: String(opts.cwd) } : {})
+          }),
           signal: controller ? controller.signal : undefined
         });
         const ct = (res.headers.get('content-type') || '').toLowerCase();
@@ -631,28 +638,35 @@
           text = await res.text().catch(() => '');
           try { data = JSON.parse(text); } catch { data = null; }
         }
-        let output = '';
-        if (data && typeof data === 'object') {
-          if (typeof data.output === 'string') output = data.output;
-          else if (typeof data.stdout === 'string' || typeof data.stderr === 'string') {
-            const so = String(data.stdout || '');
-            const se = String(data.stderr || '');
-            output = so + (se ? (so ? '\n' : '') + se : '');
-          } else if (typeof data.result === 'string') output = data.result;
-          else output = JSON.stringify(data, null, 2);
-        } else if (text) {
-          output = text;
+
+        let stdout = '';
+        let stderr = '';
+        let exitCode = null;
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          stdout = (data.stdout != null) ? String(data.stdout) : (data.output != null ? String(data.output) : '');
+          stderr = (data.stderr != null) ? String(data.stderr) : (data.error ? String(data.error) : '');
+          if (data.exitCode != null && Number.isFinite(Number(data.exitCode))) exitCode = Number(data.exitCode);
+          else if (data.code != null && Number.isFinite(Number(data.code))) exitCode = Number(data.code);
+          if (!stdout && !stderr && data.stdout == null && data.stderr == null && data.output == null && data.error == null) {
+            stdout = JSON.stringify(data, null, 2);
+          }
+        } else {
+          stdout = text || (data != null ? String(data) : '');
         }
-        if (output == null) output = '';
+
+        const output = stdout + (stderr ? (stdout ? '\n' : '') + stderr : '');
+
         if (!res.ok) {
-          const errMsg = (data && (data.error || data.message)) ? String(data.error || data.message) : `HTTP ${res.status}`;
-          const combined = String(output || errMsg);
-          return { ok: false, stdout: output, stderr: errMsg, output: combined, mode: 'remote-http', code: res.status, status: res.status, data };
+          const errMsg = stderr || (data && data.message ? String(data.message) : `HTTP ${res.status}`);
+          return { ok: false, stdout, stderr: errMsg, output: output || errMsg, mode: 'remote-http', code: (exitCode != null ? exitCode : res.status), status: res.status, data, runnerUrl };
         }
-        return { ok: true, stdout: output, stderr: '', output: String(output), mode: 'remote-http', code: 0, status: res.status, data };
+
+        const code = exitCode != null ? exitCode : 0;
+        const ok = code === 0 && !(data && data.ok === false);
+        return { ok, stdout, stderr, output, mode: 'remote-http', code, status: res.status, data, runnerUrl };
       } catch (e) {
         const msg = (e && e.name === 'AbortError') ? `Remote runner request timed out after ${Math.round(timeoutMs/1000)}s` : (e && e.message ? e.message : String(e));
-        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 1, error: msg };
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 1, error: msg, runnerUrl };
       } finally {
         if (timer) clearTimeout(timer);
       }
