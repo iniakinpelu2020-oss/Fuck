@@ -9,7 +9,7 @@ const DEFAULT_UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
 const FAST_FALLBACK_MODEL = 'gemini-3.8-flash';
 const MAX_UPSTREAM_ATTEMPTS = 2;
-const PER_PROVIDER_TIMEOUT_MS = 15000;
+const PER_PROVIDER_TIMEOUT_MS = 45000;
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -132,6 +132,10 @@ export async function onRequestPost(context) {
     const body = { ...payload, model: attempt.model };
     if (!Object.prototype.hasOwnProperty.call(body, 'stream')) body.stream = wantStream;
     if (body.reasoning_effort == null) body.reasoning_effort = 'low';
+    // Fast chat for Gemini 3.8 Flash: disable/minimize thinking to avoid 15s+ latency/timeouts.
+    if (/gemini-3\.8-flash/i.test(String(attempt.model || ''))) {
+      if (body.thinkingConfig == null) body.thinkingConfig = { thinkingBudget: 0 };
+    }
 
     let res;
     try {
