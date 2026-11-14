@@ -574,5 +574,106 @@
   };
 
   window.App = App;
+  async function inspectFileInBrowser(file) {
+    if (!file) throw new Error('No file provided');
+    const name = String(file.name || 'file');
+    const size = Number(file.size || 0);
+    const mimeRaw = String(file.type || '');
+    const mime = mimeRaw.toLowerCase();
+    const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+    const fmtBytes = (window.Utils && Utils.formatBytes) ? Utils.formatBytes : (n => n + ' B');
+
+    const textExts = new Set(['txt','md','markdown','js','mjs','cjs','ts','tsx','jsx','json','jsonc','html','htm','css','scss','sass','less','xml','svg','yml','yaml','toml','ini','cfg','conf','env','sh','bash','zsh','fish','ps1','bat','cmd','py','rb','php','java','c','h','cpp','hpp','cc','cxx','cs','go','rs','swift','kt','kts','scala','sql','graphql','gql','vue','svelte','astro','prisma','proto','dockerfile','makefile','gitignore','gitattributes','editorconfig','lock','csv','tsv','log','diff','patch','map']);
+    const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','ico','avif','svgz']);
+    const archiveExts = new Set(['zip','apk','jar','ipa','aab','war','xapk','apks']);
+    const binaryExts = new Set(['exe','dll','bin','dmg','pe','so','dylib','msi','sys','ocx','elf','class','dex','wasm','o','a','lib','pdb','iso','img']);
+
+    const baseName = name.split('/').pop() || name;
+    const isImage = mime.startsWith('image/') || imageExts.has(ext);
+    const isPdf = mime === 'application/pdf' || ext === 'pdf';
+    const isArchive = archiveExts.has(ext) || mime === 'application/zip' || mime === 'application/x-zip-compressed' || mime === 'multipart/x-zip' || mime === 'application/vnd.android.package-archive' || mime === 'application/java-archive' || mime === 'application/x-ip';
+    const isBinaryNamed = binaryExts.has(ext);
+    let isText = !isImage && !isPdf && !isArchive && !isBinaryNamed && (
+      textExts.has(ext) ||
+      mime.startsWith('text/') ||
+      mime === 'application/json' || mime === 'application/javascript' || mime === 'application/typescript' ||
+      mime === 'application/xml' || mime === 'application/x-yaml' || mime === 'application/yaml' ||
+      mime === 'application/toml' || mime === 'application/sql' || mime === 'application/graphql' ||
+      mime === 'application/xhtml+xml' || mime === 'image/svg+xml' || ext === 'svg'
+    );
+    if (!isImage && !isPdf && !isArchive && !isBinaryNamed && !isText) {
+      if (/^(README|LICENSE|CHANGELOG|CONTRIBUTING|Dockerfile|Makefile|Procfile|Jenkinsfile|Vagrantfile)$/i.test(baseName)) isText = true;
+      else if (!ext && !mime) isText = true; // extensionless unknowns: try as text
+    }
+
+    if (isText) {
+      let text = '';
+      try { text = await file.text(); }
+      catch (e) { text = `[Failed to read text: ${e && e.message ? e.message : e}]`; }
+      const label = ext || 'text';
+      return {
+        ok: true, file, name, size, mime: mimeRaw || 'text/plain', ext,
+        fileType: label, detectedType: label, kind: 'text',
+        text, report: text,
+        contentForWorkspace: text,
+        contentForAgent: text
+      };
+    }
+
+    if (isImage) {
+      let dataUrl = '';
+      try {
+        dataUrl = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result || ''));
+          r.onerror = () => reject(r.error || new Error('Failed to read image'));
+          r.readAsDataURL(file);
+        });
+      } catch (e) { /* ignore */ }
+      const label = ext || (mime.split('/')[1] || 'image');
+      const report = `[Image file: ${name}]\nDetected type: ${label}\nMIME: ${mimeRaw || 'image/*'}\nSize: ${fmtBytes(size)} (${size} bytes)${dataUrl ? '\nData URL: (loaded, ' + dataUrl.length + ' chars)' : ''}`;
+      return {
+        ok: true, file, name, size, mime: mimeRaw || 'image/*', ext,
+        fileType: label, detectedType: label, kind: 'image',
+        dataUrl, report,
+        contentForWorkspace: report,
+        contentForAgent: report
+      };
+    }
+
+    let report = '';
+    if (window.BinaryInspector && typeof BinaryInspector.analyzeToText === 'function') {
+      try { report = await BinaryInspector.analyzeToText(file); }
+      catch (e) { report = `Name: ${name}\nSize: ${fmtBytes(size)} (${size} bytes)\nMIME: ${mimeRaw || 'unknown'}\nAnalysis failed: ${e && e.message ? e.message : e}`; }
+    } else {
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const head = [...bytes.slice(0, 32)].map(b => b.toString(16).padStart(2, '0')).join(' ');
+        report = `Name: ${name}\nSize: ${fmtBytes(size)} (${size} bytes)\nMIME: ${mimeRaw || 'unknown'}\nHeader (hex): ${head}\n(Binary inspector unavailable)`;
+      } catch (e) {
+        report = `Name: ${name}\nSize: ${fmtBytes(size)} (${size} bytes)\nMIME: ${mimeRaw || 'unknown'}\nAnalysis failed: ${e && e.message ? e.message : e}`;
+      }
+    }
+
+    let kind = 'binary';
+    let fileType = ext || 'binary';
+    if (isArchive) { kind = 'archive'; fileType = ext || 'archive'; }
+    else if (isPdf) { kind = 'pdf'; fileType = 'pdf'; }
+    else if (['exe','dll','sys','ocx','msi'].includes(ext)) { kind = 'binary'; fileType = ext; }
+    else if (ext === 'dmg') { kind = 'binary'; fileType = 'dmg'; }
+    else { fileType = ext || (isPdf ? 'pdf' : 'binary'); kind = isPdf ? 'pdf' : 'binary'; }
+
+    return {
+      ok: true, file, name, size, mime: mimeRaw || 'application/octet-stream', ext,
+      fileType, detectedType: fileType, kind,
+      report,
+      contentForWorkspace: report,
+      contentForAgent: report
+    };
+  }
+
+  window.inspectFileInBrowser = inspectFileInBrowser;
+
   window.addEventListener('DOMContentLoaded', () => App.init());
 })();

@@ -446,8 +446,6 @@
     if (window.AppState && AppState.emit) AppState.emit('workspace:changed');
   }
 
-  const CHAT_TEXT_EXTS = new Set(['js','mjs','cjs','ts','tsx','jsx','html','htm','css','scss','sass','less','json','jsonc','py','md','markdown','txt','sh','bash','zsh','yml','yaml','xml','svg']);
-
   const Workspace = {
     pendingAttachments: [],
     lastBinaryIocReport: null,
@@ -463,10 +461,7 @@
       const fileInput = document.getElementById('chatFileInput');
       if (attachBtn && fileInput && !attachBtn.dataset.boundAttach) {
         attachBtn.dataset.boundAttach = '1';
-        attachBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          fileInput.click();
-        });
+        attachBtn.addEventListener('click', (e) => { e.preventDefault(); fileInput.click(); });
       }
       if (fileInput && !fileInput.dataset.boundAttach) {
         fileInput.dataset.boundAttach = '1';
@@ -475,9 +470,7 @@
             if (fileInput.files && fileInput.files.length) {
               await this.handleFiles(fileInput.files, { attachToChat: true, source: 'chat-attach' });
             }
-          } finally {
-            fileInput.value = '';
-          }
+          } finally { fileInput.value = ''; }
         });
       }
 
@@ -504,79 +497,9 @@
       });
     },
 
-    isChatTextFile(file) {
-      const name = String((file && file.name) || '').toLowerCase();
-      const ext = getExt(name);
-      if (CHAT_TEXT_EXTS.has(ext)) return true;
-      const mime = String((file && file.type) || '').toLowerCase();
-      if (mime.startsWith('text/')) return true;
-      if (mime === 'application/json' || mime === 'application/javascript' || mime === 'application/xml' || mime === 'image/svg+xml') return true;
-      return false;
-    },
-
-    getHttpRunnerUrl() {
-      try { return (window.TerminalPanel && typeof TerminalPanel.getHttpRunnerUrl === 'function') ? (TerminalPanel.getHttpRunnerUrl() || '') : ''; }
-      catch { return ''; }
-    },
-
-    async uploadFileToRunner(file, runnerUrl) {
-      const token = (window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '';
-      const fd = new FormData();
-      fd.append('file', file, file.name || 'upload.bin');
-      fd.append('runnerUrl', runnerUrl);
-      fd.append('token', String(token || ''));
-      fd.append('filename', file.name || 'upload.bin');
-      const res = await fetch('/api/upload', { method: 'POST', body: fd });
-      const ct = (res.headers.get('content-type') || '').toLowerCase();
-      let data = null;
-      if (ct.includes('application/json')) data = await res.json().catch(() => null);
-      else {
-        const text = await res.text().catch(() => '');
-        try { data = JSON.parse(text); } catch { data = { ok: res.ok, stdout: text, stderr: res.ok ? '' : text }; }
-      }
-      if (!data || typeof data !== 'object') data = { ok: res.ok };
-      if (res.ok && data.ok !== false) return { ok: true, ...data };
-      return { ok: false, ...data, stderr: (data && (data.stderr || data.error || data.message)) || `HTTP ${res.status}` };
-    },
-
-    async processChatBinaryFile(file, ctx) {
-      // Binary/large chat attachment: upload to configured remote HTTP runner if available, else metadata-only chip
-      const httpRunner = this.getHttpRunnerUrl();
-      let uploaded = null;
-      let uploadError = '';
-      if (httpRunner) {
-        try {
-          uploaded = await this.uploadFileToRunner(file, httpRunner);
-          if (!uploaded || uploaded.ok === false) {
-            uploadError = (uploaded && (uploaded.stderr || uploaded.error || uploaded.message)) || 'Upload failed';
-            uploaded = null;
-          }
-        } catch (e) {
-          uploadError = e && e.message ? e.message : String(e);
-          uploaded = null;
-        }
-      }
-      const attachment = {
-        id: uid('att'),
-        kind: 'binary-upload',
-        name: ctx.name,
-        size: ctx.size,
-        mime: ctx.mime || 'application/octet-stream',
-        uploaded: !!uploaded,
-        runnerUrl: httpRunner || '',
-        remotePath: uploaded ? (uploaded.path || uploaded.filePath || uploaded.remotePath || uploaded.filename || '') : '',
-        uploadResult: uploaded || null,
-        uploadError: uploadError || (!httpRunner ? 'No remote HTTP runner configured' : '')
-      };
-      return { path: null, attachment };
-    },
-
     getPending() { return Array.isArray(this.pendingAttachments) ? [...this.pendingAttachments] : []; },
 
-    clearPending() {
-      this.pendingAttachments = [];
-      this.renderChips();
-    },
+    clearPending() { this.pendingAttachments = []; this.renderChips(); },
 
     removePending(id) {
       this.pendingAttachments = (this.pendingAttachments || []).filter(a => a.id !== id);
@@ -595,11 +518,7 @@
       const el = document.getElementById('chatAttachmentChips');
       if (!el) return;
       const list = this.pendingAttachments || [];
-      if (!list.length) {
-        el.innerHTML = '';
-        el.classList.add('hidden');
-        return;
-      }
+      if (!list.length) { el.innerHTML = ''; el.classList.add('hidden'); return; }
       el.classList.remove('hidden');
       el.innerHTML = list.map(att => this.renderChip(att)).join('');
       el.querySelectorAll('[data-remove-att]').forEach(btn => {
@@ -613,33 +532,37 @@
 
     iconFor(att) {
       if (!att) return '📎';
-      if (att.kind === 'image') return '🖼️';
-      if (att.kind === 'zip') return '🗜️';
+      const ft = String(att.fileType || att.detectedType || att.kind || '').toLowerCase();
+      if (att.kind === 'image' || /^(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/.test(ft)) return '🖼️';
+      if (att.kind === 'pdf' || ft === 'pdf') return '📕';
+      if (att.kind === 'archive' || att.kind === 'zip' || /^(zip|apk|jar|ipa|aab|war|xapk|apks)$/.test(ft)) return '🗜️';
       if (att.kind === 'text') return '📄';
       if (att.kind === 'binary') return '📦';
-      if (att.kind === 'binary-upload') return att.uploaded ? '⬆️' : '📦';
       return '📎';
     },
 
     renderChip(att) {
       const name = esc(att.name || 'file');
       const size = esc(fmtBytes(att.size || 0));
-      const type = esc(att.mime || att.kind || 'file');
+      const mimeOrKind = esc(att.mime || att.kind || 'file');
       const icon = this.iconFor(att);
-      const thumb = (att.kind === 'image' && att.dataUrl)
-        ? `<img src="${att.dataUrl}" alt="" class="w-8 h-8 object-cover rounded border border-border shrink-0" />`
-        : `<div class="w-8 h-8 rounded border border-border bg-white/5 flex items-center justify-center text-sm shrink-0">${icon}</div>`;
-      let sub = `${size} · ${type}`;
-      if (att.kind === 'zip' && Array.isArray(att.extractedPaths)) sub = `${size} · zip · ${att.extractedPaths.length} files`;
-      else if (att.kind === 'binary-upload') sub = att.uploaded ? `${size} · uploaded to remote runner` : `${size} · not uploaded${att.uploadError && /No remote HTTP runner/i.test(att.uploadError) ? ' (no runner)' : ''}`;
-      return `<div class="inline-flex items-center gap-2 max-w-full rounded-lg border border-border bg-panel/80 px-2 py-1.5 text-xs text-slate-200">
-        ${thumb}
-        <div class="min-w-0">
-          <div class="truncate max-w-[12rem] font-medium" title="${name}">${name}</div>
-          <div class="text-[10px] text-slate-400 truncate max-w-[12rem]" title="${esc(sub)}">${esc(sub)}</div>
-        </div>
-        <button type="button" data-remove-att="${esc(att.id)}" class="ml-1 text-slate-400 hover:text-white shrink-0" title="Remove attachment" aria-label="Remove attachment">✕</button>
-      </div>`;
+      const thumb = ((att.kind === 'image') && att.dataUrl)
+        ? '<img src="' + att.dataUrl + '" alt="" class="w-8 h-8 object-cover rounded border border-border shrink-0" />'
+        : '<div class="w-8 h-8 rounded border border-border bg-white/5 flex items-center justify-center text-sm shrink-0">' + icon + '</div>';
+      const ft = att.fileType || att.detectedType || att.kind || 'file';
+      const ready = att.readyLabel || ('Ready (' + ft + ')');
+      let sub = size + ' · ' + ready;
+      if (att.kind === 'archive' && Array.isArray(att.extractedPaths) && att.extractedPaths.length) {
+        sub = size + ' · ' + ready + ' · ' + att.extractedPaths.length + ' extracted';
+      }
+      return '<div class="inline-flex items-center gap-2 max-w-full rounded-lg border border-border bg-panel/80 px-2 py-1.5 text-xs text-slate-200" title="' + mimeOrKind + '">' +
+        thumb +
+        '<div class="min-w-0">' +
+          '<div class="truncate max-w-[12rem] font-medium" title="' + name + '">' + name + '</div>' +
+          '<div class="text-[10px] text-slate-400 truncate max-w-[12rem]" title="' + esc(sub) + '">' + esc(sub) + '</div>' +
+        '</div>' +
+        '<button type="button" data-remove-att="' + esc(att.id) + '" class="ml-1 text-slate-400 hover:text-white shrink-0" title="Remove attachment" aria-label="Remove attachment">✕</button>' +
+      '</div>';
     },
 
     async handleFiles(fileList, opts = {}) {
@@ -656,15 +579,62 @@
           processed++;
         } catch (e) {
           console.error('Failed to process file', file && file.name, e);
-          if (window.Utils && Utils.toast) Utils.toast(`Failed: ${file && file.name ? file.name : 'file'} — ${e.message || e}`, 'error');
+          if (window.Utils && Utils.toast) Utils.toast('Failed: ' + (file && file.name ? file.name : 'file') + ' — ' + (e.message || e), 'error');
         }
       }
       if (processed && window.AppState && AppState.emit) AppState.emit('workspace:changed');
       if (processed && window.Utils && Utils.toast) {
-        const msg = attachToChat ? `Attached ${processed} file${processed === 1 ? '' : 's'}` : `Uploaded ${processed} file${processed === 1 ? '' : 's'} to workspace`;
+        const msg = attachToChat ? ('Attached ' + processed + ' file' + (processed === 1 ? '' : 's')) : ('Uploaded ' + processed + ' file' + (processed === 1 ? '' : 's') + ' to workspace');
         Utils.toast(msg, 'success');
       }
       return { processed, attachments: createdAttachments };
+    },
+
+    async _inspect(file) {
+      if (typeof window.inspectFileInBrowser === 'function') return await window.inspectFileInBrowser(file);
+      const name = String(file && file.name || 'file');
+      const size = Number(file && file.size || 0);
+      const mime = String(file && file.type || '');
+      const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+      if (isTextFile(file)) {
+        const text = await readAsText(file);
+        return { ok: true, file, name, size, mime: mime || 'text/plain', ext, fileType: ext || 'text', detectedType: ext || 'text', kind: 'text', text, report: text, contentForWorkspace: text, contentForAgent: text };
+      }
+      const buf = await readAsArrayBuffer(file);
+      const summary = capBinaryContext(summarizeBinaryBuffer(buf, { name, mime, size }), 8000);
+      return { ok: true, file, name, size, mime: mime || 'application/octet-stream', ext, fileType: ext || 'binary', detectedType: ext || 'binary', kind: isZipFile(file) ? 'archive' : 'binary', report: summary, contentForWorkspace: summary, contentForAgent: summary };
+    },
+
+    async _extractZipContents(file) {
+      if (!window.JSZip) return [];
+      const buf = await readAsArrayBuffer(file);
+      const zip = await JSZip.loadAsync(buf);
+      const extractedPaths = [];
+      const entries = Object.values(zip.files || {});
+      for (const entry of entries) {
+        if (!entry || entry.dir) continue;
+        const entryPath = sanitizePath(entry.name);
+        if (!entryPath) continue;
+        const lower = entryPath.toLowerCase();
+        const treatAsText = isTextFile({ name: entryPath, type: '' }) || /.(md|txt|json|js|ts|jsx|tsx|css|html|xml|yml|yaml|svg|csv)$/i.test(lower);
+        try {
+          if (treatAsText) {
+            const content = await entry.async('string');
+            const saved = addFileToWorkspace(entryPath, content, { dirty: false, binary: false, meta: { fromZip: file.name || 'archive' } });
+            if (saved) extractedPaths.push(saved);
+          } else {
+            const ab = await entry.async('arraybuffer');
+            const u8 = new Uint8Array(ab);
+            const hash = await sha256Hex(ab);
+            const header = headerHex(u8, 64);
+            const summary = capBinaryContext(summarizeBinaryBuffer(ab, { name: entryPath, mime: '', size: ab.byteLength, hash, headerHex: header }), 8000);
+            const stringsPreview = extractPrintableStrings(u8, 150, 1500, { minLen: 4, perStringMax: 120 });
+            const saved = addFileToWorkspace(entryPath, summary, { dirty: false, binary: true, meta: { size: ab.byteLength, mime: '', fromZip: file.name || 'archive', arrayBuffer: ab, hash, stringsPreview, headerHex: header, summary } });
+            if (saved) extractedPaths.push(saved);
+          }
+        } catch (e) { console.warn('Failed to extract zip entry', entryPath, e); }
+      }
+      return extractedPaths;
     },
 
     async processFile(file, opts = {}) {
@@ -674,265 +644,53 @@
       const mime = file.type || '';
       const basePath = sanitizePath(file.webkitRelativePath || name) || name;
 
+      const info = await this._inspect(file);
+      const fileType = info.fileType || info.detectedType || info.ext || info.kind || 'file';
+      const report = String(info.report || info.contentForAgent || info.text || '');
+      const isText = info.kind === 'text';
+
+      let path = null;
+      let extractedPaths = [];
+
+      if (info.kind === 'archive' && isZipFile(file)) {
+        path = addFileToWorkspace(basePath, report, { dirty: false, binary: true, meta: { size, mime: info.mime || mime, kind: 'archive', detectedType: fileType, summary: report } });
+        try { extractedPaths = await this._extractZipContents(file); } catch (e) { console.warn('zip extract failed', e); }
+      } else if (info.kind === 'image') {
+        path = addFileToWorkspace(basePath, String(info.contentForWorkspace || report || ('[Image file: ' + name + ']')), { dirty: false, binary: true, meta: { size, mime: info.mime || mime, kind: 'image', detectedType: fileType, dataUrl: info.dataUrl || '' } });
+      } else {
+        path = addFileToWorkspace(basePath, isText ? String(info.text || '') : report, { dirty: false, binary: !isText, meta: { size, mime: info.mime || mime, kind: info.kind, detectedType: fileType, summary: report } });
+      }
+
+      if (!isText && info.kind !== 'image' && window.BinaryInspector && typeof BinaryInspector.setFile === 'function') {
+        try { BinaryInspector.setFile(file); } catch {}
+      }
+      if (path && window.AppState) { try { AppState.setActiveFile(path); } catch {} }
+
       if (attachToChat) {
-        if (this.isChatTextFile(file)) {
-          return await this.processText(file, { attachToChat, basePath, name, size, mime });
-        }
-        // Binary/large chat attachments (.exe, .zip, .bin, etc.): upload to configured remote HTTP runner if available, else metadata-only chip
-        return await this.processChatBinaryFile(file, { attachToChat, basePath, name, size, mime });
+        const attachment = {
+          id: uid('att'),
+          kind: info.kind || 'binary',
+          name,
+          path: path || basePath,
+          size,
+          mime: info.mime || mime || '',
+          fileType,
+          detectedType: fileType,
+          readyLabel: 'Ready (' + fileType + ')',
+          report,
+          content: isText ? String(info.text || '') : '',
+          dataUrl: info.dataUrl || '',
+          truncated: false,
+          extractedPaths: extractedPaths.length ? extractedPaths : undefined
+        };
+        return { path, attachment, info };
       }
 
-      if (isZipFile(file)) {
-        return await this.processZip(file, { attachToChat, basePath, name, size, mime });
-      }
-      if (isImageFile(file)) {
-        return await this.processImage(file, { attachToChat, basePath, name, size, mime });
-      }
-      if (isTextFile(file)) {
-        return await this.processText(file, { attachToChat, basePath, name, size, mime });
-      }
-      return await this.processBinary(file, { attachToChat, basePath, name, size, mime });
+      return { path, attachment: null, info, extractedPaths };
     },
 
-    async processText(file, ctx) {
-      const content = await readAsText(file);
-      const path = addFileToWorkspace(ctx.basePath, content, { dirty: false, binary: false, meta: { size: ctx.size, mime: ctx.mime } });
-      if (path && window.AppState) {
-        // focus uploaded file in editor/explorer
-        try { AppState.setActiveFile(path); } catch {}
-      }
-      const attachment = ctx.attachToChat ? {
-        id: uid('att'), kind: 'text', name: ctx.name, path, size: ctx.size, mime: ctx.mime || 'text/plain',
-        content: content.length > 20000 ? content.slice(0, 20000) + '\n…(truncated for context)' : content,
-        truncated: content.length > 20000
-      } : null;
-      return { path, attachment };
-    },
-
-    async processImage(file, ctx) {
-      const dataUrl = await readAsDataURL(file);
-      // Images are chat attachments (vision) - keep as pending attachment; do not clutter text file tree
-      const attachment = ctx.attachToChat ? {
-        id: uid('att'), kind: 'image', name: ctx.name, path: ctx.basePath, size: ctx.size, mime: ctx.mime || 'image/*', dataUrl
-      } : null;
-      // If uploaded via workspace (not chat), still make it available as a note? store metadata entry
-      if (!ctx.attachToChat) {
-        const path = addFileToWorkspace(ctx.basePath, `[Image file: ${ctx.name}]\nMIME: ${ctx.mime || 'unknown'}\nSize: ${ctx.size} bytes\n(Attached image; preview available when sent to chat.)`, { dirty: false, binary: true, meta: { size: ctx.size, mime: ctx.mime, kind: 'image' } });
-        return { path, attachment: null };
-      }
-      return { path: null, attachment };
-    },
-
-    async processZip(file, ctx) {
-      if (!window.JSZip) throw new Error('JSZip not available to unpack archive');
-      const buf = await readAsArrayBuffer(file);
-      const zip = await JSZip.loadAsync(buf);
-      const extractedPaths = [];
-      const entries = Object.values(zip.files || {});
-      for (const entry of entries) {
-        if (!entry || entry.dir) continue;
-        const entryPath = sanitizePath(entry.name);
-        if (!entryPath) continue;
-        // decide text vs binary for extracted file
-        const fake = { name: entryPath, type: '' };
-        const lower = entryPath.toLowerCase();
-        const treatAsText = isTextFile(fake) || /\.(md|txt|json|js|ts|jsx|tsx|css|html|xml|yml|yaml|svg|csv)$/i.test(lower);
-        try {
-          if (treatAsText) {
-            const content = await entry.async('string');
-            const saved = addFileToWorkspace(entryPath, content, { dirty: false, binary: false, meta: { fromZip: ctx.name } });
-            if (saved) extractedPaths.push(saved);
-          } else {
-            const ab = await entry.async('arraybuffer');
-            const u8 = new Uint8Array(ab);
-            const hash = await sha256Hex(ab);
-            const header = headerHex(u8, 64);
-            const summary = capBinaryContext(summarizeBinaryBuffer(ab, { name: entryPath, mime: '', size: ab.byteLength, hash, headerHex: header }), 8000);
-            const stringsPreview = extractPrintableStrings(u8, 150, 1500, { minLen: 4, perStringMax: 120 });
-            const saved = addFileToWorkspace(entryPath, summary, { dirty: false, binary: true, meta: { size: ab.byteLength, mime: '', fromZip: ctx.name, arrayBuffer: ab, hash, stringsPreview, headerHex: header, summary } });
-            if (saved) extractedPaths.push(saved);
-          }
-        } catch (e) {
-          console.warn('Failed to extract zip entry', entryPath, e);
-        }
-      }
-      const attachment = ctx.attachToChat ? {
-        id: uid('att'), kind: 'zip', name: ctx.name, size: ctx.size, mime: ctx.mime || 'application/zip', extractedPaths
-      } : null;
-      return { path: null, attachment, extractedPaths };
-    },
-
-    async processBinary(file, ctx) {
-      const buf = await readAsArrayBuffer(file);
-      const u8 = new Uint8Array(buf);
-      const hash = await sha256Hex(buf);
-      const header = headerHex(u8, 64);
-      // Capped summary (<= 8000 chars): PE header/sections/imports + top 150 unique printable strings; never dump raw bytes
-      const summary = capBinaryContext(summarizeBinaryBuffer(buf, { name: ctx.name, mime: ctx.mime || 'application/octet-stream', size: ctx.size, hash, headerHex: header }), 8000);
-      const stringsPreview = extractPrintableStrings(u8, 150, 1500, { minLen: 4, perStringMax: 120 });
-      const path = addFileToWorkspace(ctx.basePath, summary, {
-        dirty: false,
-        binary: true,
-        meta: { size: ctx.size, mime: ctx.mime, arrayBuffer: buf, hash, stringsPreview, headerHex: header, summary }
-      });
-      // Make available to Binary analyzer tab (File wrapper; ArrayBuffer stored in workspace)
-      try {
-        if (window.BinaryInspector && typeof BinaryInspector.setFile === 'function') {
-          const f = new File([buf], ctx.name, { type: ctx.mime || 'application/octet-stream' });
-          BinaryInspector.setFile(f);
-        }
-      } catch {}
-      const attachment = ctx.attachToChat ? {
-        id: uid('att'), kind: 'binary', name: ctx.name, path, size: ctx.size, mime: ctx.mime || 'application/octet-stream',
-        hash, headerHex: header, summary
-      } : null;
-      return { path, attachment };
-    },
-
-    async getLoadedBinaryBuffer() {
-      // Prefer currently selected/analyzed binary in BinaryInspector, else most recent binary in workspace
-      try {
-        if (window.BinaryInspector && BinaryInspector.selectedFile) {
-          const buf = await BinaryInspector.selectedFile.arrayBuffer();
-          return { name: BinaryInspector.selectedFile.name || 'binary', mime: BinaryInspector.selectedFile.type || 'application/octet-stream', size: BinaryInspector.selectedFile.size || buf.byteLength || 0, buffer: buf };
-        }
-      } catch {}
-      try {
-        if (window.AppState && AppState.files) {
-          const candidates = [];
-          for (const f of AppState.files.values()) {
-            if (f && f.binary && f.meta && f.meta.arrayBuffer) candidates.push(f);
-          }
-          if (candidates.length) {
-            const f = candidates[candidates.length - 1];
-            const ab = f.meta.arrayBuffer;
-            return { name: f.path || f.name || 'binary', mime: (f.meta && f.meta.mime) || 'application/octet-stream', size: (f.meta && f.meta.size) || (ab && ab.byteLength) || 0, buffer: ab, file: f };
-          }
-        }
-      } catch {}
-      return null;
-    },
-
-    async extractBinaryIocs(args = {}) {
-      const opts = (args && typeof args === 'object') ? args : {};
-      const loaded = await this.getLoadedBinaryBuffer();
-      if (!loaded || !loaded.buffer) {
-        return { ok: false, error: 'No binary loaded. Load or select a binary in the Binary analyzer first.' };
-      }
-      const bytes = loaded.buffer instanceof Uint8Array ? loaded.buffer : new Uint8Array(loaded.buffer);
-      const report = extractBinaryIOCs(bytes, { maxScan: opts.maxScan || 4 * 1024 * 1024 });
-      report.source = { name: loaded.name, mime: loaded.mime, size: loaded.size || bytes.length };
-
-      // Optionally carve embedded payloads and add as downloadable files into Workspace
-      const wantCarve = !!(opts.carve || opts.carveEmbedded || opts.extractEmbedded || opts.saveCarved || (Array.isArray(opts.offsets) && opts.offsets.length));
-      const carvedFiles = [];
-      if (wantCarve) {
-        let targets = Array.isArray(report.embedded) ? report.embedded.slice() : [];
-        if (Array.isArray(opts.offsets) && opts.offsets.length) {
-          const wanted = new Set(opts.offsets.map(n => Number(n)).filter(n => Number.isFinite(n) && n >= 0));
-          targets = targets.filter(e => wanted.has(Number(e.offset)));
-        }
-        // if specific magic types requested
-        if (opts.types && (Array.isArray(opts.types) || typeof opts.types === 'string')) {
-          const types = new Set((Array.isArray(opts.types) ? opts.types : String(opts.types).split(',')).map(s => String(s).trim().toLowerCase()).filter(Boolean));
-          if (types.size) targets = targets.filter(e => types.has(String(e.type || '').toLowerCase()) || types.has(String(e.ext || '').replace(/^\./,'').toLowerCase()));
-        }
-        const maxCarve = Math.max(0, Math.min(Number(opts.maxCarve || 10) || 10, 25));
-        const carved = carveEmbeddedPayloads(bytes, targets, { maxCarve, maxSize: Number(opts.maxSize || 25 * 1024 * 1024) });
-        for (let i = 0; i < carved.length; i++) {
-          const c = carved[i];
-          const baseName = `carved_${c.type || 'bin'}_${c.offset}${extForEmbedded(c)}`;
-          const rec = makeDownloadableFileRecord(baseName, c.bytes, mimeForEmbedded(c));
-          // Add carved bytes into Workspace as binary file (available for download via blob URL; stored in memory)
-          try {
-            const path = addFileToWorkspace(rec.name, `[Carved embedded payload]\nSource: ${report.source.name}\nType: ${c.label || c.type}\nOffset: ${c.offset} (0x${Number(c.offset).toString(16)})\nSize: ${c.size} bytes\n\n(Downloadable binary payload stored in workspace memory.)`, {
-              dirty: false,
-              binary: true,
-              meta: { size: c.size, mime: rec.mime, arrayBuffer: c.bytes.buffer.slice(c.bytes.byteOffset, c.bytes.byteOffset + c.bytes.byteLength), carvedFrom: report.source.name, carvedOffset: c.offset, carvedType: c.type, downloadUrl: rec.downloadUrl }
-            });
-            rec.workspacePath = path || rec.name;
-          } catch {}
-          carvedFiles.push({ name: rec.name, workspacePath: rec.workspacePath || rec.name, type: c.type, label: c.label, offset: c.offset, endOffset: c.endOffset, size: c.size, mime: rec.mime, downloadUrl: rec.downloadUrl || null });
-        }
-        if (carvedFiles.length && window.AppState && AppState.emit) AppState.emit('workspace:changed');
-      }
-
-      const summary = {
-        ok: true,
-        source: report.source,
-        scannedBytes: report.scannedBytes,
-        totalBytes: report.totalBytes,
-        counts: {
-          urls: report.urls.length,
-          ipv4: report.ipv4.length,
-          registryPaths: report.registryPaths.length,
-          filePaths: report.filePaths.length,
-          embedded: report.embedded.length,
-          carved: carvedFiles.length
-        },
-        urls: report.urls.slice(0, 200),
-        ipv4: report.ipv4.slice(0, 200),
-        registryPaths: report.registryPaths.slice(0, 200),
-        filePaths: report.filePaths.slice(0, 200),
-        embedded: report.embedded.slice(0, 200).map(e => ({ offset: e.offset, endOffset: e.endOffset, size: e.size, type: e.type, label: e.label, signatureHex: e.signatureHex })),
-        carvedFiles
-      };
-      this.lastBinaryIocReport = summary;
-      return summary;
-    },
-
-    buildAgentAttachmentContext(attachments) {
-      const list = Array.isArray(attachments) ? attachments : [];
-      if (!list.length) return '';
-      const parts = [];
-      parts.push('--- Attached Files (user upload) ---');
-      for (const a of list) {
-        if (!a) continue;
-        if (a.kind === 'text') {
-          const body = String(a.content || '');
-          parts.push(`\n[Text file: ${a.name}${a.path ? ' (' + a.path + ')' : ''} | ${fmtBytes(a.size||0)} | ${a.mime||'text/plain'}]`);
-          parts.push(body);
-        } else if (a.kind === 'zip') {
-          const paths = Array.isArray(a.extractedPaths) ? a.extractedPaths : [];
-          parts.push(`\n[Zip archive: ${a.name} | ${fmtBytes(a.size||0)} | extracted ${paths.length} file(s) into workspace]`);
-          if (paths.length) parts.push(paths.slice(0, 300).map(p => `- ${p}`).join('\n'));
-        } else if (a.kind === 'binary') {
-          // Capped to 8000 chars total per binary to avoid oversized LLM payloads (e.g. 30MB+ exe)
-          const summary = capBinaryContext(a.summary || a.text || '', 8000);
-          if (summary) {
-            parts.push('\n' + summary);
-          } else {
-            parts.push(`\n[Binary/Document file: ${a.name}${a.path ? ' (' + a.path + ')' : ''}]`);
-            parts.push(`MIME: ${a.mime || 'unknown'}`);
-            parts.push(`Size: ${a.size || 0} bytes (${fmtBytes(a.size || 0)})`);
-            parts.push(`SHA-256: ${a.hash || '(unavailable)'}`);
-            if (a.headerHex) parts.push(`Header bytes (hex): ${a.headerHex}`);
-            if (a.stringsPreview) parts.push(capBinaryContext('Printable strings (sample):\n' + String(a.stringsPreview), 2000));
-          }
-        } else if (a.kind === 'image') {
-          parts.push(`\n[Image attachment: ${a.name} | ${fmtBytes(a.size||0)} | ${a.mime||'image/*'}] (image provided as vision input)`);
-        } else if (a.kind === 'binary-upload') {
-          parts.push(`\n[Attached file: ${a.name} | ${fmtBytes(a.size||0)} | ${a.mime||'application/octet-stream'}]`);
-          parts.push(`Filename: ${a.name}`);
-          parts.push(`Size: ${fmtBytes(a.size||0)} (${a.size||0} bytes)`);
-          if (a.uploaded) {
-            parts.push(`Status: uploaded to remote runner${a.remotePath ? ` (path: ${a.remotePath})` : ''}.`);
-            if (a.runnerUrl) parts.push(`Runner: ${a.runnerUrl}`);
-            if (a.uploadResult && (a.uploadResult.stdout || a.uploadResult.path || a.uploadResult.message || a.uploadResult.savedAs)) {
-              const detail = String(a.uploadResult.stdout || a.uploadResult.path || a.uploadResult.savedAs || a.uploadResult.message).slice(0, 800);
-              parts.push(`Upload result: ${detail}`);
-            }
-          } else {
-            parts.push(`Status: not uploaded to remote runner.`);
-            parts.push(`Reason: ${a.uploadError || 'No remote HTTP runner configured/connected'}`);
-          }
-        } else {
-          parts.push(`\n[Attachment: ${a.name || 'file'} | ${a.kind || 'file'} | ${fmtBytes(a.size||0)}]`);
-        }
-      }
-      return parts.join('\n');
-    }
   };
+
 
   // helpers exposed for other modules
   Workspace.summarizeBinaryBuffer = summarizeBinaryBuffer;
