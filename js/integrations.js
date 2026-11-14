@@ -226,7 +226,7 @@
         const parsed = Utils.safeJsonParse(raw, null);
         data = parsed && typeof parsed === 'object' ? parsed : { message: raw };
       } else {
-        data = { message: 'Hello from Apex IDE' };
+        data = { message: 'Hello from Apex Studio' };
       }
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
       try {

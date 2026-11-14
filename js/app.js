@@ -23,8 +23,8 @@
 
       if (AppState.files.size === 0) {
         AppState.workspaceName = 'Starter Workspace';
-        AppState.upsertFile('src/index.js', "console.log('Hello from Apex IDE');\n");
-        AppState.upsertFile('notes.txt', 'Welcome to Apex.\n\nAsk the agent to build, search, analyze, or automate.\nOpen Workspace/Editor from the top bar when needed.\nConfigure models, keys, MCP, RAG, and integrations in Settings (⚙️).\n');
+        AppState.upsertFile('src/index.js', "console.log('Hello from Apex Studio');\n");
+        AppState.upsertFile('notes.txt', 'Welcome to Apex Studio.\n\nAsk the agent to build, search, analyze, or automate.\nOpen Workspace/Editor from the drawer (☰) when needed.\nConfigure models, keys, MCP, RAG, and integrations in Settings.\n');
         AppState.setActiveFile('src/index.js');
         AppState.emit('workspace:changed');
       } else {
@@ -45,7 +45,7 @@
       this.currentView = 'agent';
       this.currentMobilePane = 'right';
       this.applyView('agent');
-      Utils.toast('Apex ready', 'success');
+      Utils.toast('Apex Studio ready', 'success');
     },
 
     isMobile() { return window.innerWidth <= 900; },
@@ -477,7 +477,7 @@
       }
       const session = AppState.getChat(AppState.activeChatId);
       if (!session || !session.messages || !session.messages.length) {
-        Agent.addMessage('assistant', 'Hi — I\'m Apex, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings (⚙️) if needed.');
+        Agent.addMessage('assistant', 'Hi — I\'m Apex Studio, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings from the drawer (☰) if needed.');
         return;
       }
       session.messages.forEach(m => {

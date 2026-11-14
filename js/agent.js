@@ -1,23 +1,47 @@
 (function () {
   const Agent = {
     _lastAutoAction: null,
+    isGenerating: false,
+
+    setGenerating(state) {
+      this.isGenerating = !!state;
+      const btns = [
+        document.getElementById('agent-send-btn-inline'),
+        document.getElementById('agent-send-btn'),
+        document.querySelector('[data-agent-send="inline"]'),
+        document.querySelector('#btnSendChat')
+      ];
+      btns.forEach(btn => {
+        if (!btn) return;
+        btn.disabled = this.isGenerating;
+        if (this.isGenerating) {
+          btn.classList.add('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
+          btn.setAttribute('aria-disabled', 'true');
+        } else {
+          btn.classList.remove('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
+          btn.removeAttribute('aria-disabled');
+        }
+      });
+      const input = document.getElementById('chatInput');
+      if (input) input.setAttribute('aria-busy', this.isGenerating ? 'true' : 'false');
+    },
 
     init() {
       document.querySelectorAll('#agent-send-btn, #agent-send-btn-inline, #btnSendChat, [data-agent-send]').forEach((btn) => {
         if (btn.dataset.sendBound) return;
         btn.dataset.sendBound = '1';
-        btn.addEventListener('click', () => this.sendFromUI());
+        btn.addEventListener('click', () => { if (!this.isGenerating) this.sendFromUI(); });
       });
       const runBtn = document.getElementById('btnRunAgent');
-      if (runBtn) runBtn.addEventListener('click', () => this.sendFromUI());
+      if (runBtn) runBtn.addEventListener('click', () => { if (!this.isGenerating) this.sendFromUI(); });
       const btnN8n = document.getElementById('btnTriggerN8n');
-      if (btnN8n) btnN8n.addEventListener('click', () => this.triggerN8nFromUI());
+      if (btnN8n) btnN8n.addEventListener('click', () => { if (!this.isGenerating) this.triggerN8nFromUI(); });
       const idxBtn = document.getElementById('btnIndexWorkspace');
       if (idxBtn) idxBtn.addEventListener('click', async () => { await RAG.indexWorkspace(); this.updateKeyStatus(); });
       const chat = document.getElementById('chatInput');
       if (chat) {
         chat.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendFromUI(); }
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!this.isGenerating) this.sendFromUI(); }
         });
         chat.addEventListener('input', () => this.autoResizeChat());
         this.autoResizeChat();
@@ -65,7 +89,7 @@
       if (!el) return;
       el.textContent = keys.length
         ? `Custom keys: ${keys.length} (#${(AppState.apiKeyIndex % keys.length) + 1})`
-        : 'Apex Managed AI Active';
+        : 'Apex Studio Managed AI Active';
       el.className = 'badge badge-success !text-[10px] !px-2 !py-0.5';
       el.title = keys.length ? 'Custom multi-key rotation enabled' : 'Using built-in managed AI proxy. Configure custom keys in Settings.';
     },
@@ -232,11 +256,22 @@
     },
 
     async triggerN8nFromUI() {
-      const input = document.getElementById('chatInput');
-      const prompt = (input?.value || '').trim();
-      const message = prompt.replace(/^\/(?:n8n|trigger)\s*/i, '').trim() || prompt || 'Hello from Apex IDE';
-      if (prompt && input) input.value = '';
-      await this.triggerN8n(message, { from: 'settings-test', showUser: true });
+      if (this.isGenerating) return;
+      this.setGenerating(true);
+      try {
+        const input = document.getElementById('chatInput');
+        const prompt = (input?.value || '').trim();
+        const message = prompt.replace(/^\/(?:n8n|trigger)\s*/i, '').trim() || prompt || 'Hello from Apex Studio';
+        if (prompt && input) { input.value = ''; this.autoResizeChat(); }
+        this.addMessage('user', message, 'n8n');
+        const streamBubble = this.createStreamingAssistantBubble('n8n');
+        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+        const r = await this.triggerN8n(message, { from: 'settings-test' }, { source: 'agent-chat', showErrors: true });
+        this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
+        if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
+      } finally {
+        this.setGenerating(false);
+      }
     },
 
     async triggerN8n(message, extra = {}, opts = {}) {
@@ -271,22 +306,31 @@
     },
 
     async sendFromUI() {
+      if (this.isGenerating) return;
       const input = document.getElementById('chatInput');
       if (!input) return;
       const prompt = input.value.trim();
       if (!prompt) return;
+
       // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
       if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
-        input.value = ''; this.autoResizeChat();
-        const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
-        this.addMessage('user', prompt);
-        const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
-        const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
-        const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
-        this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
-        if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
+        this.setGenerating(true);
+        try {
+          input.value = ''; this.autoResizeChat();
+          const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
+          this.addMessage('user', prompt);
+          const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
+          const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
+          const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
+          this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
+          if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
+        } finally {
+          this.setGenerating(false);
+        }
         return;
       }
+
+      this.setGenerating(true);
       input.value = ''; this.autoResizeChat();
       this.addMessage('user', prompt);
       // Immediate animated "Thinking..." pulse inside assistant bubble
@@ -298,6 +342,8 @@
         console.error('Agent send error:', e);
         if (streamBubble) streamBubble.setError(`Error: ${msg}`);
         else this.addMessage('assistant', `Error: ${msg}`);
+      } finally {
+        this.setGenerating(false);
       }
     },
 

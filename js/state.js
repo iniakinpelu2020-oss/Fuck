@@ -11,7 +11,7 @@
   const DEFAULT_N8N_WEBHOOK_URL = 'https://drippydee.app.n8n.cloud/webhook/apex-agent';
 
   const defaultSettings = {
-    systemPrompt: `You are Apex, an autonomous coding and workspace agent inside Apex IDE. Act decisively and helpfully in plain English.
+    systemPrompt: `You are Apex, an autonomous coding and workspace agent inside Apex Studio. Act decisively and helpfully in plain English.
 
 Runtime & tool loop (browser-native, zero-config):
 - Workspace & Editor: you have live read/write access to the virtual workspace via provided context. Create, update, or open files by returning a fenced \`\`\`json:edits\`\`\` block:
