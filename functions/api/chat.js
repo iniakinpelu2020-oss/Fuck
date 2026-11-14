@@ -7,7 +7,7 @@ const CORS_HEADERS = {
 
 const DEFAULT_UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
-const FAST_FALLBACK_MODEL = 'gemini-3.8-flash';
+const FAST_FALLBACK_MODEL = 'gemini-3.8-flash-lite';
 const MAX_UPSTREAM_ATTEMPTS = 2;
 const PER_PROVIDER_TIMEOUT_MS = 45000;
 
