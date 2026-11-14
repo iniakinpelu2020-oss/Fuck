@@ -90,6 +90,8 @@ async function codespaceExec(payload = {}, env = {}) {
   const token = trim(payload.token || payload.runnerToken || payload.authToken || requestAuthFromPayload(payload) || (env && env.CODESPACE_TOKEN) || '');
   const command = payload.command == null ? '' : asString(payload.command);
   const cwd = payload.cwd == null ? '' : asString(payload.cwd);
+  const timeoutRaw = Number(payload.timeoutMs != null ? payload.timeoutMs : (payload.timeout != null ? payload.timeout : (env && env.CODESPACE_TIMEOUT_MS)));
+  const timeoutMs = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.min(3600000, Math.max(1000, Math.round(timeoutRaw))) : 600000;
 
   let target;
   try {
@@ -99,18 +101,21 @@ async function codespaceExec(payload = {}, env = {}) {
   }
 
   // Extra safety: if caller somehow passes a github.dev host, still do not rewrite/fallback; just forward explicitly with redirect:manual.
-  const body = { command };
+  const body = { command, timeoutMs };
   if (cwd) body.cwd = cwd;
 
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
   try {
     const upstream = await fetch(target, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': token.toLower().startsWith('bearer ') ? token : `Bearer ${token}` } : {}),
+        ...(token ? { 'Authorization': token.toLowerCase().startsWith('bearer ') ? token : `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
       redirect: 'manual', // critical: avoid Cloudflare redirect/subrequest loops
+      signal: controller ? controller.signal : undefined,
     });
 
     // Handle redirects cleanly (no follow)
@@ -161,8 +166,13 @@ async function codespaceExec(payload = {}, env = {}) {
       hostIsGithubDev: isGithubDevHost(target),
     }, 200);
   } catch (err) {
-    const message = asString(err && (err.message || err) || 'Upstream request failed');
-    return json({ ok: false, stdout: '', stderr: message, exitCode: 1, error: message, target }, 502);
+    const isAbort = err && (err.name === 'AbortError' || /aborted/i.test(asString(err && (err.message || err))));
+    const message = isAbort
+      ? `Remote runner request timed out after ${Math.round(timeoutMs / 1000)}s`
+      : asString(err && (err.message || err) || 'Upstream request failed');
+    return json({ ok: false, stdout: '', stderr: message, exitCode: isAbort ? 124 : 1, error: message, target, timeoutMs, timedOut: isAbort || undefined }, isAbort ? 504 : 502);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

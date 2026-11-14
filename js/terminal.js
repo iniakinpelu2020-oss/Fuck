@@ -578,12 +578,23 @@
     },
 
     // --- Remote WebSocket exec bridge ---
+    getConfiguredCommandTimeoutMs(opts = {}) {
+      if (opts && opts.timeoutMs != null && Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0) {
+        return Math.max(1000, Math.round(Number(opts.timeoutMs)));
+      }
+      const secRaw = (window.AppState && AppState.settings && AppState.settings.commandTimeoutSec != null)
+        ? Number(AppState.settings.commandTimeoutSec)
+        : 600;
+      const sec = (Number.isFinite(secRaw) && secRaw > 0) ? secRaw : 600;
+      return Math.max(1000, Math.min(3600, Math.round(sec)) * 1000);
+    },
+
     async execRemote(command, opts = {}) {
       if (!(this.socket && this.socket.readyState === WebSocket.OPEN)) {
         return { ok: false, stdout: '', stderr: 'Remote shell not connected', output: 'Remote shell not connected', mode: 'remote', code: 1 };
       }
       const id = `exec_${Date.now().toString(36)}_${(++this._execSeq).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-      const timeoutMs = Number(opts.timeoutMs || 120000);
+      const timeoutMs = this.getConfiguredCommandTimeoutMs(opts);
 
       return await new Promise((resolve) => {
         const entry = { id, resolve, stdout: '', stderr: '', output: '', code: null, timer: null };
@@ -592,13 +603,13 @@
           this._pendingExec.delete(id);
           const stdout = entry.stdout || '';
           const stderr = (entry.stderr ? entry.stderr + '\n' : '') + `[remote] Command timed out after ${Math.round(timeoutMs/1000)}s`;
-          resolve({ ok: false, stdout, stderr, output: stdout + (stderr ? '\n' + stderr : ''), code: 124, mode: 'remote', timedOut: true });
+          resolve({ ok: false, stdout, stderr, output: stdout + (stderr ? '\n' + stderr : ''), code: 124, mode: 'remote', timedOut: true, timeoutMs });
         }, timeoutMs);
         this._pendingExec.set(id, entry);
 
         try {
-          // Standard bridge handshake: { type: 'exec', id, command }
-          this.socket.send(JSON.stringify({ type: 'exec', id, command }));
+          // Standard bridge handshake: { type: 'exec', id, command, timeoutMs }
+          this.socket.send(JSON.stringify({ type: 'exec', id, command, timeoutMs }));
         } catch (e) {
           clearTimeout(entry.timer);
           this._pendingExec.delete(id);
@@ -612,11 +623,11 @@
       if (!runnerUrl) {
         return { ok: false, stdout: '', stderr: 'Remote runner URL not configured', output: 'Remote runner URL not configured', mode: 'remote-http', code: 1 };
       }
-      const timeoutMs = Number(opts.timeoutMs || 120000);
+      const timeoutMs = this.getConfiguredCommandTimeoutMs(opts);
       const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
       try {
-        // Proxy via Cloudflare Worker to avoid browser CORS/preflight and Authorization header restrictions
+        // Proxy via Cloudflare Worker/Pages Function to avoid browser CORS/preflight and Authorization header restrictions
         const token = (window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '';
         const res = await fetch('/api/exec', {
           method: 'POST',
@@ -625,6 +636,7 @@
             runnerUrl,
             command: String(command || ''),
             token: String(token || ''),
+            timeoutMs,
             ...(opts.cwd ? { cwd: String(opts.cwd) } : {})
           }),
           signal: controller ? controller.signal : undefined
@@ -658,15 +670,15 @@
 
         if (!res.ok) {
           const errMsg = stderr || (data && data.message ? String(data.message) : `HTTP ${res.status}`);
-          return { ok: false, stdout, stderr: errMsg, output: output || errMsg, mode: 'remote-http', code: (exitCode != null ? exitCode : res.status), status: res.status, data, runnerUrl };
+          return { ok: false, stdout, stderr: errMsg, output: output || errMsg, mode: 'remote-http', code: (exitCode != null ? exitCode : res.status), status: res.status, data, runnerUrl, timeoutMs };
         }
 
         const code = exitCode != null ? exitCode : 0;
         const ok = code === 0 && !(data && data.ok === false);
-        return { ok, stdout, stderr, output, mode: 'remote-http', code, status: res.status, data, runnerUrl };
+        return { ok, stdout, stderr, output, mode: 'remote-http', code, status: res.status, data, runnerUrl, timeoutMs };
       } catch (e) {
         const msg = (e && e.name === 'AbortError') ? `Remote runner request timed out after ${Math.round(timeoutMs/1000)}s` : (e && e.message ? e.message : String(e));
-        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 1, error: msg, runnerUrl };
+        return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 124, error: msg, runnerUrl, timeoutMs, timedOut: (e && e.name === 'AbortError') || undefined };
       } finally {
         if (timer) clearTimeout(timer);
       }

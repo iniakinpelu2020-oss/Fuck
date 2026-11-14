@@ -432,6 +432,7 @@
           <section class="card-surface p-4 space-y-3">
             <div class="text-sm font-medium text-slate-200">Runtime & Bridges</div>
             <div class="space-y-1"><label class="field-label" for="settingTerminalWs">Remote Terminal / Runner URL</label><input id="settingTerminalWs" class="input font-mono text-xs" placeholder="ws://localhost:3001/terminal or https://.../exec" /></div>
+            <div class="space-y-1"><label class="field-label" for="settingCommandTimeout">Command Timeout (seconds)</label><input id="settingCommandTimeout" type="number" min="1" max="3600" value="600" class="input font-mono text-xs" placeholder="600" /></div>
             <div class="space-y-1"><label class="field-label" for="settingWebhookUrl">External webhook / automation URL <span class="text-slate-600">(optional)</span></label><input id="settingWebhookUrl" class="input font-mono text-xs" placeholder="https://example.com/webhook" /></div>
             <p class="text-[11px] text-slate-500">Settings persist in local browser storage on this device.</p>
           </section>

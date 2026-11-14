@@ -225,11 +225,15 @@
         // Read current Settings modal values (exact .value.trim() for runner URL)
         const terminalInput = document.getElementById('settingTerminalWs');
         const terminalUrl = (terminalInput?.value || '').trim();
+        const timeoutInput = document.getElementById('settingCommandTimeout');
+        const timeoutSecRaw = Number(timeoutInput ? timeoutInput.value : (AppState.settings.commandTimeoutSec != null ? AppState.settings.commandTimeoutSec : 600));
+        const commandTimeoutSec = (Number.isFinite(timeoutSecRaw) && timeoutSecRaw > 0) ? Math.min(3600, Math.max(1, Math.round(timeoutSecRaw))) : 600;
 
         // Agent / RAG / runtime settings
         AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt')?.value || '');
         AppState.settings.ragK = Number(document.getElementById('settingRagK')?.value || 6);
         AppState.settings.terminalWs = terminalUrl;
+        AppState.settings.commandTimeoutSec = commandTimeoutSec;
         AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl')?.value || '').trim();
         AppState.settings.githubToken = (document.getElementById('settingGithubToken')?.value || '').trim();
         AppState.saveSettings();
@@ -348,6 +352,7 @@
       setVal('settingSystemPrompt', s.systemPrompt || '');
       setVal('settingRagK', s.ragK || 6);
       setVal('settingTerminalWs', terminalUrl);
+      setVal('settingCommandTimeout', (s.commandTimeoutSec != null ? s.commandTimeoutSec : 600));
       setVal('settingWebhookUrl', s.webhookUrl || '');
       setVal('settingGithubToken', s.githubToken || '');
 

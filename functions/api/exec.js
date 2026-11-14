@@ -42,6 +42,8 @@ export async function onRequestPost(context) {
   const token = (payload.token != null ? String(payload.token) : '') || asTrimmedString(env && env.CODESPACE_TOKEN);
   const command = payload.command == null ? '' : String(payload.command);
   const cwd = payload.cwd == null ? undefined : String(payload.cwd);
+  const timeoutRaw = Number(payload.timeoutMs != null ? payload.timeoutMs : (payload.timeout != null ? payload.timeout : (env && env.CODESPACE_TIMEOUT_MS)));
+  const timeoutMs = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.min(3600000, Math.max(1000, Math.round(timeoutRaw))) : 600000;
 
   if (!runnerUrl) {
     return jsonResponse({ stdout: '', stderr: 'runnerUrl is required (or set CODESPACE_URL)', exitCode: 1, error: 'runnerUrl is required' }, 400);
@@ -59,9 +61,11 @@ export async function onRequestPost(context) {
     return jsonResponse({ stdout: '', stderr: `Invalid runnerUrl: ${runnerUrl}`, exitCode: 1, error: 'Invalid runnerUrl' }, 400);
   }
 
-  const body = { command };
+  const body = { command, timeoutMs };
   if (cwd != null && cwd !== '') body.cwd = cwd;
 
+  const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
   try {
     const upstream = await fetch(target, {
       method: 'POST',
@@ -71,6 +75,7 @@ export async function onRequestPost(context) {
       },
       body: JSON.stringify(body),
       redirect: 'manual',
+      signal: controller ? controller.signal : undefined,
     });
 
     const ct = (upstream.headers.get('content-type') || '').toLowerCase();
@@ -124,7 +129,12 @@ export async function onRequestPost(context) {
 
     return jsonResponse(response, 200);
   } catch (err) {
-    const message = String(err && (err.message || err) || 'Upstream request failed');
-    return jsonResponse({ stdout: '', stderr: message, exitCode: 1, error: message }, 502);
+    const isAbort = err && (err.name === 'AbortError' || /aborted/i.test(String(err.message || err)));
+    const message = isAbort
+      ? `Remote runner request timed out after ${Math.round(timeoutMs/1000)}s`
+      : String(err && (err.message || err) || 'Upstream request failed');
+    return jsonResponse({ stdout: '', stderr: message, exitCode: isAbort ? 124 : 1, error: message, timedOut: isAbort || undefined, timeoutMs }, isAbort ? 504 : 502);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
