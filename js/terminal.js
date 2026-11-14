@@ -40,16 +40,20 @@
       if (btnConn) btnConn.addEventListener('click', () => this.connect());
       if (btnClear) btnClear.addEventListener('click', () => this.term && this.term.clear());
       const wsInput = document.getElementById('terminalWsUrl');
-      const saved = (window.AppState && AppState.settings && AppState.settings.terminalWs) ? String(AppState.settings.terminalWs).trim() : '';
-      if (wsInput && saved) wsInput.value = saved;
+      const saved = (window.AppState && AppState.settings && AppState.settings.terminalWs != null) ? String(AppState.settings.terminalWs).trim() : '';
+      if (wsInput) wsInput.value = saved;
+      this.remoteUrl = saved;
 
       // Default to browser sandbox until/unless remote connects
       this.setStatus('browser');
 
-      // Auto-connect/apply runner config on page load if a remote URL is already saved
+      // Auto-connect/apply runner config on page load only when a remote URL is saved
       if (saved) {
         if (this.isHttpRunnerUrl(saved)) this.applyRunnerConfig(saved, { silent: true, auto: true });
         else this.connect(saved, { silent: true, auto: true });
+      } else {
+        this.connected = false;
+        this.socket = null;
       }
     },
 
@@ -84,8 +88,11 @@
 
     getConfiguredUrl() {
       const el = document.getElementById('terminalWsUrl');
-      const v = (el && el.value ? String(el.value).trim() : '') || (window.AppState && AppState.settings && AppState.settings.terminalWs) || this.remoteUrl || '';
-      return String(v || '').trim();
+      const fromInput = (el && typeof el.value === 'string') ? el.value.trim() : '';
+      if (fromInput) return fromInput;
+      const saved = (window.AppState && AppState.settings && AppState.settings.terminalWs != null) ? String(AppState.settings.terminalWs).trim() : '';
+      if (saved) return saved;
+      return String(this.remoteUrl || '').trim();
     },
 
     getHttpRunnerUrl() {

@@ -31,8 +31,10 @@
         AppState.setActiveFile(AppState.activeFilePath || AppState.files.keys().next().value || null);
       }
 
+      // Sync runner UI from saved settings (no hardcoded defaults)
+      const savedTerminalUrl = (AppState.settings && AppState.settings.terminalWs != null) ? String(AppState.settings.terminalWs).trim() : '';
       const tws = document.getElementById('terminalWsUrl');
-      if (tws) tws.value = AppState.settings.terminalWs || '';
+      if (tws) tws.value = savedTerminalUrl;
       this.bindPreview();
       this.bindKeyboardViewport();
       this.syncWorkspaceLabels();
@@ -199,10 +201,13 @@
       if (cancel) cancel.addEventListener('click', () => this.closeSettings());
       document.getElementById('settingsModal')?.addEventListener('click', (e) => { if (e.target.id === 'settingsModal') this.closeSettings(); });
       document.getElementById('btnSaveSettings')?.addEventListener('click', () => {
+        // Read current Settings modal values (exact .value.trim() for runner URL)
+        const terminalInput = document.getElementById('settingTerminalWs');
+        const terminalUrl = (terminalInput?.value || '').trim();
+
         // Agent / RAG / runtime settings
         AppState.settings.systemPrompt = (document.getElementById('settingSystemPrompt')?.value || '');
         AppState.settings.ragK = Number(document.getElementById('settingRagK')?.value || 6);
-        const terminalUrl = (document.getElementById('settingTerminalWs')?.value || '').trim();
         AppState.settings.terminalWs = terminalUrl;
         AppState.settings.webhookUrl = (document.getElementById('settingWebhookUrl')?.value || '').trim();
         AppState.settings.githubToken = (document.getElementById('settingGithubToken')?.value || '').trim();
@@ -225,15 +230,16 @@
           if (window.Utils && Utils.toast) Utils.toast(`MCP config not saved: ${e.message}`, 'error');
         }
 
-        // Keep terminal/runner UI and active state in sync with persisted URL
+        // Update active runtime config and runner UI immediately from saved value
         const tws = document.getElementById('terminalWsUrl');
         if (tws) tws.value = terminalUrl;
         if (window.TerminalPanel) {
           TerminalPanel.remoteUrl = terminalUrl;
           if (typeof TerminalPanel.applyRunnerConfig === 'function') {
             TerminalPanel.applyRunnerConfig(terminalUrl, { silent: true });
-          } else if (typeof TerminalPanel.disconnect === 'function' && !terminalUrl) {
-            TerminalPanel.disconnect(true);
+          } else if (typeof TerminalPanel.persistUrl === 'function') {
+            TerminalPanel.persistUrl(terminalUrl);
+            if (!terminalUrl && typeof TerminalPanel.disconnect === 'function') TerminalPanel.disconnect(true);
           }
         }
 
@@ -314,9 +320,13 @@
     restoreSettingsUI() {
       const s = (window.AppState && AppState.settings) ? AppState.settings : {};
       const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+
+      // Read runner URL directly from saved settings/localStorage state (no hardcoded fallback)
+      const terminalUrl = (s.terminalWs != null ? String(s.terminalWs) : '').trim();
+
       setVal('settingSystemPrompt', s.systemPrompt || '');
       setVal('settingRagK', s.ragK || 6);
-      setVal('settingTerminalWs', s.terminalWs || '');
+      setVal('settingTerminalWs', terminalUrl);
       setVal('settingWebhookUrl', s.webhookUrl || '');
       setVal('settingGithubToken', s.githubToken || '');
 
@@ -328,13 +338,17 @@
         try { mcpInput.value = JSON.stringify(servers.length ? servers : fallback, null, 2); } catch { mcpInput.value = '[]'; }
       }
 
-      // Keep header/runner input in sync
+      // Keep header/runner input and active runtime in sync with saved value
       const tws = document.getElementById('terminalWsUrl');
-      if (tws) tws.value = s.terminalWs || '';
-      // Apply saved remote runner to active TerminalPanel so restored state is active
+      if (tws) tws.value = terminalUrl;
       try {
-        if (window.TerminalPanel && typeof TerminalPanel.applyRunnerConfig === 'function') {
-          TerminalPanel.applyRunnerConfig(s.terminalWs || '', { silent: true });
+        if (window.TerminalPanel) {
+          TerminalPanel.remoteUrl = terminalUrl;
+          if (typeof TerminalPanel.applyRunnerConfig === 'function') {
+            TerminalPanel.applyRunnerConfig(terminalUrl, { silent: true });
+          } else if (typeof TerminalPanel.persistUrl === 'function') {
+            TerminalPanel.persistUrl(terminalUrl);
+          }
         }
       } catch {}
     },

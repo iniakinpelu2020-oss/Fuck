@@ -29,7 +29,7 @@ Behavior:
 - Be concise, practical, and proactive. Do not invent file paths or results.
 - If no edits are needed, use an empty edits array. Keep user-facing prose clean (do not rely on users reading raw JSON).`,
     ragK: 6,
-    terminalWs: 'ws://localhost:3001/terminal',
+    terminalWs: '',
     webhookUrl: ''
   };
 
