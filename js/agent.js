@@ -152,11 +152,39 @@
       return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(b)}</span>`).join('')}</div>`;
     },
 
-    addMessage(role, content, meta = '', badges = []) {
+    isWelcomeMessage(role, content) {
+      if (role !== 'assistant') return false;
+      const c = String(content || '');
+      return /^Hi — I'm Apex\b/.test(c) && c.includes('your autonomous agent');
+    },
+
+    persistMessage(role, content, meta = '', badges = []) {
+      if (this.isWelcomeMessage(role, content)) return;
+      try {
+        const id = AppState && AppState.activeChatId;
+        if (!id || !AppState.chatSessions) return;
+        const s = AppState.getChat(id);
+        if (!s) return;
+        if (!Array.isArray(s.messages)) s.messages = [];
+        s.messages.push({ role, content, meta, badges: Array.isArray(badges) ? badges : [], ts: Date.now() });
+        s.updatedAt = Date.now();
+        AppState.saveChatSessions();
+        if (window.App && typeof App.renderChatHistory === 'function') App.renderChatHistory();
+      } catch (e) { /* persistence should not break chat */ }
+    },
+
+    addMessage(role, content, meta = '', badges = [], opts = {}) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
+
+      // Remove transient empty-state welcome placeholder when a real message is added
+      if (!opts.keepWelcomePlaceholder) {
+        wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
+      }
+
       const div = document.createElement('div');
       div.className = `chat-msg ${role}`;
+      if (opts.welcomePlaceholder) div.dataset.welcomePlaceholder = '1';
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
@@ -164,21 +192,9 @@
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
 
-      // Persist message to active chat session
-      try {
-        const id = AppState.activeChatId;
-        if (id && AppState.chatSessions) {
-          const s = AppState.getChat(id);
-          if (s) {
-            if (!s.messages) s.messages = [];
-            s.messages.push({ role, content, meta, badges, ts: Date.now() });
-            s.updatedAt = Date.now();
-            AppState.saveChatSessions();
-            if (window.App && typeof App.renderChatHistory === 'function') App.renderChatHistory();
-          }
-        }
-      } catch (e) { /* persistence should not break chat */ }
-
+      // Persist message to active chat session (never persist welcome/placeholder or when explicitly disabled)
+      const shouldPersist = opts.persist !== false && !opts.welcomePlaceholder;
+      if (shouldPersist) this.persistMessage(role, content, meta, badges);
       return div;
     },
 
@@ -201,9 +217,11 @@
       if (wrap) wrap.scrollTop = wrap.scrollHeight;
     },
 
-    createStreamingAssistantBubble(meta = 'chat') {
+    createStreamingAssistantBubble(meta = 'chat', opts = {}) {
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
+      // Remove transient empty-state welcome placeholder when a real response begins
+      wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
       const div = document.createElement('div');
       div.className = 'chat-msg assistant streaming';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
@@ -214,6 +232,7 @@
       const badgesEl = div.querySelector('.chat-badges');
       let text = '';
       let started = false;
+      let finalized = false;
       return {
         el: div,
         append(delta) {
@@ -231,11 +250,15 @@
         },
         getText() { return text; },
         finalize(displayText = null, badges = []) {
+          if (finalized) return (displayText != null ? String(displayText) : text);
+          finalized = true;
           const full = (displayText != null ? String(displayText) : text);
           contentEl.innerHTML = Agent.renderMessageContent(full);
-          if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badges);
+          const badgeArr = Array.isArray(badges) ? badges : [];
+          if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badgeArr);
           div.classList.remove('streaming');
           wrap.scrollTop = wrap.scrollHeight;
+          if (opts.persist !== false) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
           return full;
         }
       };

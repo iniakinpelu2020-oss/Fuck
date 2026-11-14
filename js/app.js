@@ -465,26 +465,47 @@
     },
 
     loadActiveChat() {
-      const id = AppState.activeChatId;
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return;
       wrap.innerHTML = '';
-      if (!id) {
-        // ensure a default session exists
+
+      // Ensure there is always an active session
+      if (!AppState.activeChatId || !AppState.getChat(AppState.activeChatId)) {
         const s = AppState.createChat('New chat');
         AppState.saveActiveChatId(s.id);
-        this.renderChatHistory();
       }
+
       const session = AppState.getChat(AppState.activeChatId);
-      if (!session || !session.messages || !session.messages.length) {
-        Agent.addMessage('assistant', 'Hi — I\'m Apex Studio, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings from the drawer (☰) if needed.');
+      if (!session) return;
+
+      // Strip/filter any previously saved welcome messages from old sessions
+      const isWelcome = (m) => m && m.role === 'assistant' && /^Hi — I'm Apex\b/.test(String(m.content || '')) && String(m.content || '').includes('your autonomous agent');
+      const messages = Array.isArray(session.messages) ? session.messages.filter(m => !isWelcome(m)) : [];
+      if (Array.isArray(session.messages) && messages.length !== session.messages.length) {
+        session.messages = messages;
+        AppState.saveChatSessions();
+      }
+
+      if (!messages.length) {
+        // Temporary empty-state placeholder only (never saved to localStorage)
+        Agent.addMessage(
+          'assistant',
+          'Hi — I\'m Apex Studio, your autonomous agent. Ask me to search the web, write or edit code, analyze binaries, or run automations. I\'ll decide which tools to use and show progress here.\n\nConfigure models, keys, MCP, RAG, and integrations in Settings from the drawer (☰) if needed.',
+          '',
+          [],
+          { persist: false, welcomePlaceholder: true, keepWelcomePlaceholder: true }
+        );
+        this.renderChatHistory();
         return;
       }
-      session.messages.forEach(m => {
-        if (m.role === 'user') Agent.addMessage('user', m.content, m.meta);
-        else if (m.role === 'assistant') Agent.addMessage('assistant', m.content, m.meta, m.badges);
-        else if (m.role === 'system') Agent.addMessage('system', m.content, m.meta);
+
+      // Restore real conversation messages without re-persisting them
+      messages.forEach(m => {
+        if (!m) return;
+        const role = m.role || 'assistant';
+        Agent.addMessage(role, m.content, m.meta || '', m.badges || [], { persist: false, keepWelcomePlaceholder: true });
       });
+      this.renderChatHistory();
     },
 
     togglePin(id) {

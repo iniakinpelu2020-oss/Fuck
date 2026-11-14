@@ -56,6 +56,28 @@ Behavior:
       if (!Array.isArray(this.apiKeys)) this.apiKeys = [];
       if (!Array.isArray(this.mcpServers)) this.mcpServers = [];
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
+      this.sanitizeChatSessions();
+    },
+
+    isWelcomeMessage(msg) {
+      if (!msg || msg.role !== 'assistant') return false;
+      const c = String(msg.content || '');
+      return /^Hi — I'm Apex\b/.test(c) && c.includes('your autonomous agent');
+    },
+
+    sanitizeChatSessions() {
+      if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
+      let changed = false;
+      for (const session of this.chatSessions) {
+        if (!session || !Array.isArray(session.messages)) continue;
+        const filtered = session.messages.filter(m => !this.isWelcomeMessage(m));
+        if (filtered.length !== session.messages.length) {
+          session.messages = filtered;
+          changed = true;
+        }
+      }
+      if (changed) this.saveChatSessions();
+      return changed;
     },
 
     subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
