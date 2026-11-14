@@ -356,8 +356,8 @@
       const chatAttachments = (window.Workspace && typeof Workspace.getPending === 'function') ? (Workspace.getPending() || []) : [];
       if (!prompt && !chatAttachments.length) return;
 
-      // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
-      if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
+      // Back-compat: explicit /n8n or "trigger n8n" commands only
+      if (this.isExplicitN8nCommand(prompt)) {
         this.setGenerating(true);
         try {
           input.value = ''; this.autoResizeChat();
@@ -449,7 +449,7 @@
         return { name: 'Groq', provider: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile' };
       }
       // Gemini OpenAI-compatible endpoint (browser-direct)
-      return { name: 'Gemini', provider: 'openai-compatible', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.0-flash' };
+      return { name: 'Gemini', provider: 'openai-compatible', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-3.8-flash' };
     },
 
     getLlmTarget() {
@@ -844,12 +844,42 @@
       const live = /(202[4-9]|latest|newest|current|recent|today|now|breaking)/i;
       return intent.test(prompt) || (live.test(prompt) && /(what|who|when|which|news|release|version|docs|api)/i.test(prompt));
     },
+    isExplicitN8nCommand(prompt) {
+      const p = String(prompt || '').trim();
+      return /^\/(?:n8n|trigger)\b/i.test(p) || /^trigger\s+n8n\b/i.test(p);
+    },
+    hasExplicitN8nIntent(prompt) {
+      const p = String(prompt || '').trim();
+      if (!p) return false;
+      if (this.isExplicitN8nCommand(p)) return true;
+      const lower = p.toLowerCase();
+      // Require explicit intent to run/trigger an n8n automation/workflow.
+      // Never auto-trigger on greetings or normal code/binary questions.
+      const mentionsN8n = /\bn8n\b|\bn\s*8\s*n\b/.test(lower);
+      const actionVerb = /\b(run|trigger|execute|start|launch|fire|invoke|dispatch|kick\s*off|test|activate)\b/.test(lower);
+      const workflowWord = /\bworkflow(s)?\b|\bautomation(s)?\b|\bwebhook\b/.test(lower);
+      if (!actionVerb) return false;
+      if (!mentionsN8n && !workflowWord) return false;
+      // Must clearly refer to n8n automation/workflow execution
+      const explicitN8nTarget = mentionsN8n || /\bn8n\b/.test(lower);
+      if (!explicitN8nTarget) return false;
+
+      // Exclude questions/how-to/explanations/coding requests unless clearly asking to run it now
+      const asksToRunNow = /\b(now|right now|for me|please run|please trigger|please execute|please start|go ahead and run|go ahead and trigger)\b/.test(lower);
+      const isInformational = /^\s*(what|how|why|when|where|who|which|explain|describe|help me understand|tell me about|can you explain|could you explain|difference between|compare)\b/i.test(p);
+      const isAuthoringRequest = /^\s*(write|create|build|make|generate|code|implement|add|fix|debug|refactor|update|modify|review|analyze|inspect|scan)\b/i.test(p);
+      if ((isInformational || isAuthoringRequest) && !asksToRunNow) return false;
+
+      // Simple greetings/chit-chat safety (e.g. "hello run n8n?" unlikely, but be safe)
+      if (/^\s*(hi|hello|hey|yo|thanks|thank you|ok|okay)[!.,\s]*$/i.test(p)) return false;
+
+      return true;
+    },
     shouldN8n(prompt) {
-      const p = String(prompt || '').toLowerCase();
-      if (/^\/(?:n8n|trigger)\b/i.test(p)) return true;
+      if (this.isExplicitN8nCommand(prompt)) return true;
       const hasConfig = !!((window.ApexWorkflowBridge && ApexWorkflowBridge.getWebhookUrl && ApexWorkflowBridge.getWebhookUrl()) || (AppState.settings && AppState.settings.webhookUrl));
       if (!hasConfig) return false;
-      return /(n8n|workflow automation|run (the )?workflow|trigger (the )?workflow|zapier-like|webhook automation|automation pipeline|execute automation)/i.test(prompt);
+      return this.hasExplicitN8nIntent(prompt);
     },
     shouldBinaryAnalyze(prompt) {
       const p = String(prompt || '').toLowerCase();
@@ -1189,8 +1219,8 @@
         }
       }
 
-      // n8n action requested by agent
-      if (actions.n8n) {
+      // n8n action requested by agent (only when user explicitly asked to run n8n automation/workflow)
+      if (actions.n8n && this.hasExplicitN8nIntent(prompt)) {
         const msg = (typeof actions.n8n === 'string') ? actions.n8n : (actions.n8n.message || actions.n8n.prompt || prompt);
         const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
         const r = await this.triggerN8n(msg, typeof actions.n8n === 'object' ? actions.n8n : { from: 'agent-action' }, { source: 'agent-autonomous', showErrors: false });

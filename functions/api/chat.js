@@ -7,7 +7,7 @@ const CORS_HEADERS = {
 
 const DEFAULT_UPSTREAM_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'gemini-3.8-flash';
-const FAST_FALLBACK_MODEL = 'gemini-2.0-flash';
+const FAST_FALLBACK_MODEL = 'gemini-3.8-flash';
 const MAX_UPSTREAM_ATTEMPTS = 2;
 const PER_PROVIDER_TIMEOUT_MS = 15000;
 
@@ -109,7 +109,9 @@ export async function onRequestPost(context) {
   }
 
   const upstreamUrl = (env && env.APEX_API_URL && String(env.APEX_API_URL).trim()) || DEFAULT_UPSTREAM_URL;
-  const primaryModel = normalizeModelId(payload.model) || (env && env.APEX_DEFAULT_MODEL && String(env.APEX_DEFAULT_MODEL).trim()) || DEFAULT_MODEL;
+  // Read body.model from the incoming request payload (Settings override); fall back to env/default only if blank.
+  const requestedModel = normalizeModelId(payload.model);
+  const primaryModel = requestedModel || (env && env.APEX_DEFAULT_MODEL && String(env.APEX_DEFAULT_MODEL).trim()) || DEFAULT_MODEL;
   const incomingAuth = request.headers.get('Authorization');
   const serverKeys = parseApiKeys(env && env.APEX_API_KEYS);
 
