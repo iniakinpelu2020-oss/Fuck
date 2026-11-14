@@ -446,13 +446,129 @@
     if (window.AppState && AppState.emit) AppState.emit('workspace:changed');
   }
 
+  const CHAT_TEXT_EXTS = new Set(['js','mjs','cjs','ts','tsx','jsx','html','htm','css','scss','sass','less','json','jsonc','py','md','markdown','txt','sh','bash','zsh','yml','yaml','xml','svg']);
+
   const Workspace = {
     pendingAttachments: [],
     lastBinaryIocReport: null,
 
     init() {
       this.pendingAttachments = [];
+      this.bindChatComposer();
       this.renderChips();
+    },
+
+    bindChatComposer() {
+      const attachBtn = document.getElementById('btnChatAttach');
+      const fileInput = document.getElementById('chatFileInput');
+      if (attachBtn && fileInput && !attachBtn.dataset.boundAttach) {
+        attachBtn.dataset.boundAttach = '1';
+        attachBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          fileInput.click();
+        });
+      }
+      if (fileInput && !fileInput.dataset.boundAttach) {
+        fileInput.dataset.boundAttach = '1';
+        fileInput.addEventListener('change', async () => {
+          try {
+            if (fileInput.files && fileInput.files.length) {
+              await this.handleFiles(fileInput.files, { attachToChat: true, source: 'chat-attach' });
+            }
+          } finally {
+            fileInput.value = '';
+          }
+        });
+      }
+
+      const dropTargets = [
+        document.getElementById('chatDropZone'),
+        document.getElementById('chatMessages'),
+        document.getElementById('agentComposerWrap')
+      ].filter(Boolean);
+      dropTargets.forEach((zone) => {
+        if (zone.dataset.dropBoundChat) return;
+        zone.dataset.dropBoundChat = '1';
+        let dragDepth = 0;
+        const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+        const activate = () => zone.classList.add('ring-1', 'ring-accent2/60', 'bg-accent2/5');
+        const deactivate = () => zone.classList.remove('ring-1', 'ring-accent2/60', 'bg-accent2/5');
+        zone.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; activate(); });
+        zone.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; activate(); });
+        zone.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) deactivate(); });
+        zone.addEventListener('drop', async (e) => {
+          if (!hasFiles(e) || !e.dataTransfer.files || !e.dataTransfer.files.length) { dragDepth = 0; deactivate(); return; }
+          e.preventDefault(); e.stopPropagation(); dragDepth = 0; deactivate();
+          await this.handleFiles(e.dataTransfer.files, { attachToChat: true, source: 'chat-drop' });
+        });
+      });
+    },
+
+    isChatTextFile(file) {
+      const name = String((file && file.name) || '').toLowerCase();
+      const ext = getExt(name);
+      if (CHAT_TEXT_EXTS.has(ext)) return true;
+      const mime = String((file && file.type) || '').toLowerCase();
+      if (mime.startsWith('text/')) return true;
+      if (mime === 'application/json' || mime === 'application/javascript' || mime === 'application/xml' || mime === 'image/svg+xml') return true;
+      return false;
+    },
+
+    getHttpRunnerUrl() {
+      try { return (window.TerminalPanel && typeof TerminalPanel.getHttpRunnerUrl === 'function') ? (TerminalPanel.getHttpRunnerUrl() || '') : ''; }
+      catch { return ''; }
+    },
+
+    async uploadFileToRunner(file, runnerUrl) {
+      const token = (window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '';
+      const fd = new FormData();
+      fd.append('file', file, file.name || 'upload.bin');
+      fd.append('runnerUrl', runnerUrl);
+      fd.append('token', String(token || ''));
+      fd.append('filename', file.name || 'upload.bin');
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      let data = null;
+      if (ct.includes('application/json')) data = await res.json().catch(() => null);
+      else {
+        const text = await res.text().catch(() => '');
+        try { data = JSON.parse(text); } catch { data = { ok: res.ok, stdout: text, stderr: res.ok ? '' : text }; }
+      }
+      if (!data || typeof data !== 'object') data = { ok: res.ok };
+      if (res.ok && data.ok !== false) return { ok: true, ...data };
+      return { ok: false, ...data, stderr: (data && (data.stderr || data.error || data.message)) || `HTTP ${res.status}` };
+    },
+
+    async processChatBinaryFile(file, ctx) {
+      // Binary/large chat attachment: upload to configured remote HTTP runner if available, else metadata-only chip
+      const httpRunner = this.getHttpRunnerUrl();
+      let uploaded = null;
+      let uploadError = '';
+      if (httpRunner) {
+        try {
+          uploaded = await this.uploadFileToRunner(file, httpRunner);
+          if (!uploaded || uploaded.ok === false) {
+            uploadError = (uploaded && (uploaded.stderr || uploaded.error || uploaded.message)) || 'Upload failed';
+            uploaded = null;
+          }
+        } catch (e) {
+          uploadError = e && e.message ? e.message : String(e);
+          uploaded = null;
+        }
+      }
+      const attachment = {
+        id: uid('att'),
+        kind: 'binary-upload',
+        name: ctx.name,
+        size: ctx.size,
+        mime: ctx.mime || 'application/octet-stream',
+        uploaded: !!uploaded,
+        runnerUrl: httpRunner || '',
+        remotePath: uploaded ? (uploaded.path || uploaded.filePath || uploaded.remotePath || uploaded.filename || '') : '',
+        uploadResult: uploaded || null,
+        uploadError: uploadError || (!httpRunner ? 'No remote HTTP runner configured' : '')
+      };
+      return { path: null, attachment };
     },
 
     getPending() { return Array.isArray(this.pendingAttachments) ? [...this.pendingAttachments] : []; },
@@ -501,6 +617,7 @@
       if (att.kind === 'zip') return '🗜️';
       if (att.kind === 'text') return '📄';
       if (att.kind === 'binary') return '📦';
+      if (att.kind === 'binary-upload') return att.uploaded ? '⬆️' : '📦';
       return '📎';
     },
 
@@ -512,9 +629,9 @@
       const thumb = (att.kind === 'image' && att.dataUrl)
         ? `<img src="${att.dataUrl}" alt="" class="w-8 h-8 object-cover rounded border border-border shrink-0" />`
         : `<div class="w-8 h-8 rounded border border-border bg-white/5 flex items-center justify-center text-sm shrink-0">${icon}</div>`;
-      const sub = att.kind === 'zip' && Array.isArray(att.extractedPaths)
-        ? `${size} · zip · ${att.extractedPaths.length} files`
-        : `${size} · ${type}`;
+      let sub = `${size} · ${type}`;
+      if (att.kind === 'zip' && Array.isArray(att.extractedPaths)) sub = `${size} · zip · ${att.extractedPaths.length} files`;
+      else if (att.kind === 'binary-upload') sub = att.uploaded ? `${size} · uploaded to remote runner` : `${size} · not uploaded${att.uploadError && /No remote HTTP runner/i.test(att.uploadError) ? ' (no runner)' : ''}`;
       return `<div class="inline-flex items-center gap-2 max-w-full rounded-lg border border-border bg-panel/80 px-2 py-1.5 text-xs text-slate-200">
         ${thumb}
         <div class="min-w-0">
@@ -556,6 +673,14 @@
       const size = file.size || 0;
       const mime = file.type || '';
       const basePath = sanitizePath(file.webkitRelativePath || name) || name;
+
+      if (attachToChat) {
+        if (this.isChatTextFile(file)) {
+          return await this.processText(file, { attachToChat, basePath, name, size, mime });
+        }
+        // Binary/large chat attachments (.exe, .zip, .bin, etc.): upload to configured remote HTTP runner if available, else metadata-only chip
+        return await this.processChatBinaryFile(file, { attachToChat, basePath, name, size, mime });
+      }
 
       if (isZipFile(file)) {
         return await this.processZip(file, { attachToChat, basePath, name, size, mime });
@@ -786,6 +911,21 @@
           }
         } else if (a.kind === 'image') {
           parts.push(`\n[Image attachment: ${a.name} | ${fmtBytes(a.size||0)} | ${a.mime||'image/*'}] (image provided as vision input)`);
+        } else if (a.kind === 'binary-upload') {
+          parts.push(`\n[Attached file: ${a.name} | ${fmtBytes(a.size||0)} | ${a.mime||'application/octet-stream'}]`);
+          parts.push(`Filename: ${a.name}`);
+          parts.push(`Size: ${fmtBytes(a.size||0)} (${a.size||0} bytes)`);
+          if (a.uploaded) {
+            parts.push(`Status: uploaded to remote runner${a.remotePath ? ` (path: ${a.remotePath})` : ''}.`);
+            if (a.runnerUrl) parts.push(`Runner: ${a.runnerUrl}`);
+            if (a.uploadResult && (a.uploadResult.stdout || a.uploadResult.path || a.uploadResult.message || a.uploadResult.savedAs)) {
+              const detail = String(a.uploadResult.stdout || a.uploadResult.path || a.uploadResult.savedAs || a.uploadResult.message).slice(0, 800);
+              parts.push(`Upload result: ${detail}`);
+            }
+          } else {
+            parts.push(`Status: not uploaded to remote runner.`);
+            parts.push(`Reason: ${a.uploadError || 'No remote HTTP runner configured/connected'}`);
+          }
         } else {
           parts.push(`\n[Attachment: ${a.name || 'file'} | ${a.kind || 'file'} | ${fmtBytes(a.size||0)}]`);
         }

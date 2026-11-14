@@ -14,6 +14,7 @@
       RAG.init();
       MCP.init();
       Integrations.init();
+      if (window.Workspace && Workspace.init) Workspace.init();
       Agent.init();
 
       // Chat history
@@ -193,6 +194,26 @@
       if (btnAgent) btnAgent.addEventListener('click', () => this.setView('agent'));
       const btnOpenSettings = document.getElementById('btnOpenSettings');
       if (btnOpenSettings) btnOpenSettings.addEventListener('click', () => this.openSettings());
+
+      // Workspace multi-file upload
+      const wsBtn = document.getElementById('btnUploadWorkspaceFiles');
+      const wsInput = document.getElementById('workspaceFileUploadInput');
+      if (wsBtn && wsInput && !wsBtn.dataset.boundUpload) {
+        wsBtn.dataset.boundUpload = '1';
+        wsBtn.addEventListener('click', () => wsInput.click());
+      }
+      if (wsInput && !wsInput.dataset.boundUpload) {
+        wsInput.dataset.boundUpload = '1';
+        wsInput.addEventListener('change', async () => {
+          try {
+            if (wsInput.files && wsInput.files.length && window.Workspace && Workspace.handleFiles) {
+              await Workspace.handleFiles(wsInput.files, { attachToChat: false, source: 'workspace-upload' });
+            }
+          } finally {
+            wsInput.value = '';
+          }
+        });
+      }
     },
 
     bindSettings() {

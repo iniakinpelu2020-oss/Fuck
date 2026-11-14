@@ -335,7 +335,8 @@
       const input = document.getElementById('chatInput');
       if (!input) return;
       const prompt = input.value.trim();
-      if (!prompt) return;
+      const chatAttachments = (window.Workspace && typeof Workspace.getPending === 'function') ? (Workspace.getPending() || []) : [];
+      if (!prompt && !chatAttachments.length) return;
 
       // Back-compat: explicit /n8n commands still work, but routing is autonomous by default
       if (/^\/(?:n8n|trigger)\b/i.test(prompt) || /^trigger\s+n8n\b/i.test(prompt)) {
@@ -343,7 +344,8 @@
         try {
           input.value = ''; this.autoResizeChat();
           const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
-          this.addMessage('user', prompt);
+          const attachmentLabel = chatAttachments.length ? `\n\n[${chatAttachments.length} attached file${chatAttachments.length === 1 ? '' : 's'} queued: ${chatAttachments.map(a => a && a.name).filter(Boolean).join(', ')}]` : '';
+          this.addMessage('user', prompt + attachmentLabel);
           const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
           const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
           const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
@@ -357,11 +359,15 @@
 
       this.setGenerating(true);
       input.value = ''; this.autoResizeChat();
-      this.addMessage('user', prompt);
+      if (chatAttachments.length && window.Workspace && typeof Workspace.clearPending === 'function') {
+        try { Workspace.clearPending(); } catch {}
+      }
+      const userDisplay = prompt || (chatAttachments.length ? `[Attached ${chatAttachments.length} file${chatAttachments.length === 1 ? '' : 's'}: ${chatAttachments.map(a => a && a.name).filter(Boolean).join(', ')}]` : '');
+      this.addMessage('user', userDisplay);
       // Immediate animated "Thinking..." pulse inside assistant bubble
       const streamBubble = this.createStreamingAssistantBubble('chat');
       try {
-        await this.runPrompt(prompt, { fromUI: true, streamBubble });
+        await this.runPrompt(prompt, { fromUI: true, streamBubble, attachments: chatAttachments });
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         console.error('Agent send error:', e);
@@ -806,6 +812,12 @@
       }
 
       let contextBlock = this.collectWorkspaceSummary();
+      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
+      if (attachments.length && window.Workspace && typeof Workspace.buildAgentAttachmentContext === 'function') {
+        const attText = Workspace.buildAgentAttachmentContext(attachments);
+        if (attText) contextBlock += `\n\n${attText}`;
+      }
+      if (attachments.length) execSummary.push(`Attached ${attachments.length} file${attachments.length === 1 ? '' : 's'}`);
 
       // Binary inspector: automatically include loaded/parsed binary analysis in agent context
       if (window.BinaryInspector) {
