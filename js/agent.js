@@ -1721,14 +1721,34 @@
       const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       const hasAttachments = attachments.length > 0;
       const starterPaths = new Set(['src/index.js', 'notes.txt']);
-      const files = (AppState && AppState.files instanceof Map) ? [...AppState.files.keys()].sort() : [];
+      const allFiles = (AppState && AppState.files instanceof Map) ? [...AppState.files.keys()].sort() : [];
       const active = (AppState && typeof AppState.getActiveFile === 'function') ? AppState.getActiveFile() : null;
       const wsName = (AppState && AppState.workspaceName) || 'Workspace';
       const text = String(prompt == null ? '' : prompt);
       const lower = text.toLowerCase();
       const trimmed = text.trim();
 
+      const MAX_CONTEXT_CHARS = 16000; // ~4k tokens total for injected workspace context
+      const MAX_TREE_ENTRIES = 180;
+      const MAX_TREE_CHARS = 5000;
+      const MAX_FILE_CONTENT_CHARS = 4000;
+      const MAX_BINARY_SUMMARY_CHARS = 1200;
+      const LARGE_FILE_SKIP_CHARS = 40000;
+
       const norm = (p) => String(p || '').replace(/^\/+/, '').trim();
+      const isExcludedWorkspacePath = (p) => {
+        const path = norm(p);
+        if (!path) return true;
+        const lowerPath = path.toLowerCase();
+        const baseLower = (path.split('/').pop() || '').toLowerCase();
+        if (lowerPath === 'node_modules' || lowerPath.startsWith('node_modules/') || lowerPath.includes('/node_modules/')) return true;
+        if (lowerPath === '.git' || lowerPath.startsWith('.git/') || lowerPath.includes('/.git/')) return true;
+        if (baseLower === 'package-lock.json' || baseLower === 'pnpm-lock.yaml' || baseLower === 'yarn.lock' || baseLower === 'bun.lockb' || baseLower === 'composer.lock') return true;
+        return false;
+      };
+
+      const files = allFiles.filter(p => !isExcludedWorkspacePath(p));
+
       const mentionsPath = (p) => {
         const path = norm(p);
         if (!path) return false;
@@ -1741,8 +1761,10 @@
 
       const anyMentioned = files.filter(mentionsPath);
       const activePath = active && active.path ? norm(active.path) : '';
+      const activeVisible = !!(activePath && files.includes(activePath));
       const mentionsActiveRef = /\b(active file|current file|this file|open file|selected file|in editor|the file i('?m| am)? (in|editing|viewing))\b/i.test(text);
-      const mentionsActive = !!(activePath && (mentionsPath(activePath) || mentionsActiveRef));
+      const mentionsActive = !!(activeVisible && (mentionsPath(activePath) || mentionsActiveRef));
+      const explicitFileRef = anyMentioned.length > 0 || mentionsActive;
       const inspectEditIntent = /\b(inspect|read|open|show|view|see|look at|check|review|explain|describe|summari[sz]e|what('?s| is) in|contents?|inside|print|cat|edit|modify|update|change|fix|refactor|rewrite|rename|implement|add|remove|delete|create|write|append|debug|test|run|build|diff|compare)\b/i.test(text);
       const asksAboutWorkspace = /\b(what files|which files|list files|show files|file tree|project files|workspace files|project structure|workspace structure|what('?s| is) in (this|the|my) (project|workspace|repo|folder|directory)|what do i have|what's here)\b/i.test(text);
 
@@ -1750,75 +1772,121 @@
       const hasFileToken = /(?:^|[\s"'`(])(?:\.?\/)?[\w@.-]+\/[\w@./-]+|\b[\w.-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json|html|htm|css|scss|sass|less|md|markdown|txt|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|fish|yml|yaml|toml|xml|svg|sql|csv|vue|svelte|astro|env|lock)\b/i.test(text);
       const hasCodingOrWorkspaceTaskIntent = asksAboutWorkspace || hasFileToken || /\b(code|coding|file|files|folder|folders|directory|directories|dir\b|path|paths|project|projects|workspace|workspaces|repo|repository|repositories|codebase|source|src\b|bug|bugs|error|errors|exception|exceptions|crash|crashes|fix|fixing|debug|debugging|refactor|refactoring|rewrite|rewriting|implement|implementing|implementation|function|functions|func\b|class\b|classes|method|methods|variable|variables|constant|constants|component|components|module|modules|import|imports|export|exports|package|packages|dependency|dependencies|library|libraries|framework|api|apis|endpoint|endpoints|route|routes|server|servers|client|clients|database|databases|db\b|query|queries|schema|script|scripts|build|compile|compiling|test|tests|testing|lint|linting|format|formatting|run|running|execute|executing|deploy|deployment|install|installing|setup|configure|config|configuration|terminal|command|commands|shell|git|github|commit|branch|merge|pull|push|npm|pnpm|yarn|bun|pip|node|deno|python|java\b|rust\b|golang|php\b|ruby\b|typescript|javascript|html|css|scss|sass|jsx|tsx|json|yaml|yml|toml|sql|markdown|react|next|vue|svelte|angular|tailwind|vite|webpack|app|apps|application|applications|website|webpage|page|pages|ui|ux|interface|layout|style|styles|button|form|input|feature|features|logic|algorithm|create|creating|add|adding|write|writing|edit|editing|update|updating|modify|modifying|change|changing|rename|renaming|move|moving|delete|deleting|remove|removing|replace|replacing|generate|generating|scaffold|scaffolding|open|opening|read|reading|show|showing|list|listing|find|finding|search|searching|grep|inspect|inspecting|review|reviewing|analy[sz]e|analyzing)\b/i.test(text);
 
-      const explicitFileRef = anyMentioned.length > 0 || mentionsActive;
-
       // Never inject workspace files/tree on casual greetings/conversational messages unless explicitly opted-in or referenced.
       if (!attach && !hasAttachments && !explicitFileRef) {
         if (isCasualConversation) return '';
         if (mode === 'chat') {
-          // Chat: only inject for explicit workspace-structure questions (tree only). Generic coding/chat questions get no workspace dump.
           if (!asksAboutWorkspace) return '';
         } else {
-          // Agent/Edit: inject workspace file tree only when user asks a coding/workspace task.
           if (!hasCodingOrWorkspaceTaskIntent) return '';
         }
       }
 
-      // File tree (names only)
-      const tree = files.slice(0, 120).map(p => `- ${p}`).join('\n');
-      let out = `Workspace: ${wsName}\nActive file: ${activePath || '(none)'}\nFiles (${files.length} total):\n${tree || '- (empty)'}`;
-      if (files.length > 120) out += `\n- ... (${files.length - 120} more)`;
+      const clampTotal = (s) => {
+        const str = String(s || '');
+        if (str.length <= MAX_CONTEXT_CHARS) return str;
+        return str.slice(0, Math.max(0, MAX_CONTEXT_CHARS - 48)) + '\n\n[workspace context truncated to budget]';
+      };
+
+      // Compact file-tree list (names only), budgeted
+      const treeEntries = [];
+      let treeChars = 0;
+      for (let i = 0; i < files.length && treeEntries.length < MAX_TREE_ENTRIES; i++) {
+        const line = `- ${files[i]}`;
+        if (treeChars + line.length + 1 > MAX_TREE_CHARS) break;
+        treeEntries.push(line);
+        treeChars += line.length + 1;
+      }
+      let treeStr = treeEntries.join('\n') || '- (empty)';
+      const hiddenCount = Math.max(0, files.length - treeEntries.length);
+      if (hiddenCount > 0) treeStr += `\n- ... (${hiddenCount} more)`;
+
+      let out = `Workspace: ${wsName}\nActive file: ${activeVisible ? activePath : '(none)'}\nFiles (${files.length} total):\n${treeStr}`;
 
       // Chat mode: workspace-structure question with no explicit file refs/attachments/toggle -> tree only, no contents
       if (mode === 'chat' && !attach && !hasAttachments && !explicitFileRef) {
-        return out;
+        return clampTotal(out);
       }
 
-      const includeContentFor = new Set();
-      const canIncludePath = (p) => {
-        const path = norm(p);
-        if (!path) return false;
-        const f = AppState.files.get(path);
-        if (!f) return false;
-        const isStarter = starterPaths.has(path);
-        const mentioned = mentionsPath(path) || (path === activePath && mentionsActive);
-        if (attach) return true; // explicit toggle opt-in
-        if (mode === 'chat') {
-          // include contents only when file is explicitly mentioned/referenced
-          return mentioned;
-        }
-        // Agent/Edit: file tree by default; include contents only when user asks to inspect/edit them.
-        // Never inject full contents of starter placeholder files unless explicitly asked to inspect/edit them.
-        if (isStarter) return mentioned && (inspectEditIntent || asksAboutWorkspace || mentionsActiveRef);
-        if (mentioned) return inspectEditIntent || asksAboutWorkspace || mentionsActiveRef;
-        return false;
+      const includeContentFor = [];
+      const pushUnique = (p) => { const n = norm(p); if (n && files.includes(n) && !includeContentFor.includes(n)) includeContentFor.push(n); };
+      const fileSize = (p) => {
+        const f = AppState.files.get(norm(p));
+        if (!f) return 0;
+        if (f.binary) return String((f.meta && (f.meta.summary || f.meta.report)) || '').length;
+        return String(f.content == null ? '' : f.content).length;
       };
 
-      if (attach && activePath && AppState.files.has(activePath)) includeContentFor.add(activePath);
-      if (explicitFileRef && activePath && !includeContentFor.has(activePath) && canIncludePath(activePath)) {
-        includeContentFor.add(activePath);
-      }
-
-      for (const p of anyMentioned.slice(0, 6)) {
-        if (!p || includeContentFor.has(p)) continue;
-        if (canIncludePath(p)) includeContentFor.add(p);
-      }
-
-      if (includeContentFor.size) {
-        for (const p of includeContentFor) {
-          const f = AppState.files.get(p);
-          if (!f) continue;
-          const content = String(f.content == null ? '' : f.content);
-          if (f.binary) {
-            const summary = String((f.meta && (f.meta.summary || f.meta.report)) || content || '[binary file]').slice(0, 4000);
-            out += `\n\n--- File Summary (${p}) ---\n${summary}`;
-          } else {
-            out += `\n\n--- File Content (${p}) ---\n${content.slice(0, 8000)}`;
+      if (attach) {
+        // Prioritize only currently open editor file plus compact file-tree list
+        if (activeVisible) pushUnique(activePath);
+      } else {
+        const canIncludePath = (p) => {
+          const path = norm(p);
+          if (!path || !files.includes(path)) return false;
+          const f = AppState.files.get(path);
+          if (!f) return false;
+          const isStarter = starterPaths.has(path);
+          const mentioned = mentionsPath(path) || (path === activePath && mentionsActive);
+          if (mode === 'chat') {
+            return mentioned;
           }
+          // Agent/Edit: file tree by default; include contents only when user asks to inspect/edit them.
+          // Never inject full contents of starter placeholder files unless explicitly asked to inspect/edit them.
+          if (isStarter) return mentioned && (inspectEditIntent || asksAboutWorkspace || mentionsActiveRef);
+          if (mentioned) return inspectEditIntent || asksAboutWorkspace || mentionsActiveRef;
+          return false;
+        };
+
+        if (explicitFileRef && activeVisible && canIncludePath(activePath)) pushUnique(activePath);
+        for (const p of anyMentioned.slice(0, 4)) {
+          if (!p || includeContentFor.includes(p)) continue;
+          if (canIncludePath(p)) pushUnique(p);
         }
       }
 
-      return out;
+      // Append file contents/summaries in priority order within total budget
+      let remaining = Math.max(0, MAX_CONTEXT_CHARS - out.length);
+      for (const p of includeContentFor) {
+        if (remaining <= 120) break;
+        const f = AppState.files.get(p);
+        if (!f) continue;
+        if (f.binary) {
+          const rawSummary = String((f.meta && (f.meta.summary || f.meta.report)) || '[binary file]');
+          const summary = rawSummary.length > MAX_BINARY_SUMMARY_CHARS ? rawSummary.slice(0, MAX_BINARY_SUMMARY_CHARS) + '\n… (truncated)' : rawSummary;
+          const block = `\n\n--- File Summary (${p}) ---\n${summary}`;
+          if (block.length > remaining) {
+            const allowed = Math.max(0, remaining - (`\n\n--- File Summary (${p}) ---\n`).length - 40);
+            if (allowed > 40) out += `\n\n--- File Summary (${p}) ---\n${summary.slice(0, allowed)}\n… (truncated)`;
+            break;
+          }
+          out += block;
+          remaining -= block.length;
+          continue;
+        }
+
+        const content = String(f.content == null ? '' : f.content);
+        if (content.length > LARGE_FILE_SKIP_CHARS) {
+          const block = `\n\n--- File Content (${p}) ---\n[omitted: file too large for context (${content.length} chars)]`;
+          if (block.length <= remaining) { out += block; remaining -= block.length; }
+          continue;
+        }
+        const maxForThis = Math.min(MAX_FILE_CONTENT_CHARS, Math.max(0, remaining - (`\n\n--- File Content (${p}) ---\n`).length - 40));
+        if (maxForThis <= 0) break;
+        const snippet = content.length > maxForThis ? content.slice(0, maxForThis) + '\n… (truncated)' : content;
+        const block = `\n\n--- File Content (${p}) ---\n${snippet}`;
+        if (block.length > remaining) {
+          if (maxForThis > 40) {
+            const tighter = content.slice(0, Math.max(0, remaining - (`\n\n--- File Content (${p}) ---\n`).length - 20)) + '\n… (truncated)';
+            out += `\n\n--- File Content (${p}) ---\n${tighter}`;
+          }
+          break;
+        }
+        out += block;
+        remaining -= block.length;
+      }
+
+      return clampTotal(out);
     },
 
     parseAgentActions(text) {
