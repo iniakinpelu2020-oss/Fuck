@@ -1267,6 +1267,23 @@
       return { value: rawArgs };
     },
 
+    formatToolArgsPreview(args) {
+      if (!args || typeof args !== 'object') return '';
+      try {
+        const entries = Object.entries(args);
+        if (!entries.length) return '';
+        return entries
+          .slice(0, 3)
+          .map(([k, v]) => {
+            const val = typeof v === 'string' ? v : JSON.stringify(v);
+            return `${k}: ${val && val.length > 40 ? val.slice(0, 37) + '...' : val}`;
+          })
+          .join(', ');
+      } catch {
+        return '';
+      }
+    },
+
     buildRequestBody(provider, model, system, userContentOrMessages, opts = {}) {
       // Accepts a plain prompt string (legacy) or a full messages array (native tool loop)
       if (provider === 'anthropic') {
