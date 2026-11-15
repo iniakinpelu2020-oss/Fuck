@@ -40,6 +40,29 @@ jobs:
           const p = 'android/app/src/main/AndroidManifest.xml';
           if (!fs.existsSync(p)) { console.error('AndroidManifest.xml not found at', p); process.exit(1); }
           let s = fs.readFileSync(p, 'utf8');
+
+          // Ensure INTERNET and ACCESS_NETWORK_STATE permissions
+          const perms = [
+            '<uses-permission android:name="android.permission.INTERNET" />',
+            '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />'
+          ];
+          for (const perm of perms) {
+            if (!s.includes(perm)) {
+              s = s.replace(/<application\b/, perm + '\n    <application');
+              console.log('Added permission:', perm);
+            }
+          }
+
+          // Ensure android:usesCleartextTraffic="true" on <application>
+          const appTag = s.match(/<application\b[^>]*>/);
+          if (appTag && /android:usesCleartextTraffic\s*=\s*"[^"]*"/.test(appTag[0])) {
+            s = s.replace(/(<application\b[^>]*?)android:usesCleartextTraffic\s*=\s*"[^"]*"/, '$1android:usesCleartextTraffic="true"');
+          } else if (/<application\b/.test(s)) {
+            s = s.replace(/<application\b/, '<application android:usesCleartextTraffic="true"');
+          }
+          console.log('Ensured android:usesCleartextTraffic="true" on <application>');
+
+          // Deep link intent-filter for com.drippydee.apexstudio
           if (!s.includes('android:scheme="com.drippydee.apexstudio"')) {
             const filter = [
               '            <intent-filter>',
@@ -52,11 +75,12 @@ jobs:
             const idx = s.lastIndexOf('</activity>');
             if (idx === -1) { console.error('No </activity> tag found in manifest'); process.exit(1); }
             s = s.slice(0, idx) + filter + '\n        ' + s.slice(idx);
-            fs.writeFileSync(p, s);
             console.log('Added com.drippydee.apexstudio deep link intent-filter');
           } else {
             console.log('Deep link intent-filter already present');
           }
+
+          fs.writeFileSync(p, s);
           NODE
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true

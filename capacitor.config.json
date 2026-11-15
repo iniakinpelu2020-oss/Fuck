@@ -2,22 +2,12 @@
   "appId": "com.drippydee.apexstudio",
   "appName": "Apex Studio",
   "webDir": "dist",
-  "bundledWebRuntime": false,
   "server": {
     "url": "https://apexaicoder.pages.dev",
     "cleartext": false,
-    "allowNavigation": [
-      "apexaicoder.pages.dev",
-      "*.firebaseapp.com",
-      "*.googleapis.com",
-      "*.workers.dev",
-      "*.n8n.cloud"
-    ]
+    "androidScheme": "https"
   },
-  "plugins": {
-    "FirebaseAuthentication": {
-      "skipNativeAuth": true,
-      "providers": ["google.com"]
-    }
+  "android": {
+    "allowMixedContent": true
   }
 }
