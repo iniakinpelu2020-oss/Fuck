@@ -35,6 +35,29 @@ jobs:
         run: |
           npx cap add android || true
           npx cap sync android
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = 'android/app/src/main/AndroidManifest.xml';
+          if (!fs.existsSync(p)) { console.error('AndroidManifest.xml not found at', p); process.exit(1); }
+          let s = fs.readFileSync(p, 'utf8');
+          if (!s.includes('android:scheme="com.drippydee.apexstudio"')) {
+            const filter = [
+              '            <intent-filter>',
+              '                <action android:name="android.intent.action.VIEW" />',
+              '                <category android:name="android.intent.category.DEFAULT" />',
+              '                <category android:name="android.intent.category.BROWSABLE" />',
+              '                <data android:scheme="com.drippydee.apexstudio" />',
+              '            </intent-filter>'
+            ].join('\n');
+            const idx = s.lastIndexOf('</activity>');
+            if (idx === -1) { console.error('No </activity> tag found in manifest'); process.exit(1); }
+            s = s.slice(0, idx) + filter + '\n        ' + s.slice(idx);
+            fs.writeFileSync(p, s);
+            console.log('Added com.drippydee.apexstudio deep link intent-filter');
+          } else {
+            console.log('Deep link intent-filter already present');
+          }
+          NODE
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           chmod +x android/gradlew
