@@ -1827,7 +1827,7 @@
       // 1) Unified autonomous tool routing (pre-LLM): web search, binary context, n8n, MCP, RAG
       const wantsSearch = this.shouldSearch(prompt);
       if (wantsSearch) {
-        const searchPreview = this.formatToolArgsPreview({ query: prompt }, 60);
+        const searchPreview = Agent.formatToolArgsPreview({ query: prompt }, 60);
         const pill = this.addStatusPill(`🔍 Searching web${searchPreview ? `: ${searchPreview}` : ''}...`, 'running');
         try {
           const data = await this.performWebSearch(prompt);
@@ -1957,7 +1957,7 @@
               const fargs = (typeof this.normalizeToolCallArgs === 'function')
                 ? this.normalizeToolCallArgs(fargsRaw)
                 : (Utils.safeJsonParse(fargsRaw, {}) || {});
-              const argPreview = (typeof this.formatToolArgsPreview === 'function') ? this.formatToolArgsPreview(fargs) : '';
+              const argPreview = (typeof this.formatToolArgsPreview === 'function') ? Agent.formatToolArgsPreview(fargs) : '';
               let toolResultText = '';
               try {
                 const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
@@ -2113,7 +2113,7 @@
           let tool = call.tool || call.name || call.toolName;
           const rawArgs = call.arguments || call.args || {};
           const args = this.normalizeToolCallArgs(rawArgs);
-          const argPreview = this.formatToolArgsPreview(args);
+          const argPreview = Agent.formatToolArgsPreview(args);
           if ((!server || !tool) && call.name) {
             const parsed = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
             if (parsed) { server = parsed.server; tool = parsed.tool; }
