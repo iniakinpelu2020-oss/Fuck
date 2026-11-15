@@ -77,7 +77,148 @@
       this._chatUiHandlersBound = true;
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return;
+
+      const closeAllMoreMenus = (except = null) => {
+        wrap.querySelectorAll('.msg-more-menu').forEach(m => { if (m !== except) m.classList.add('hidden'); });
+        wrap.querySelectorAll('[data-msg-action="more"]').forEach(b => { if (!except || !except.previousElementSibling || b !== except.previousElementSibling) b.setAttribute('aria-expanded', 'false'); });
+      };
+      document.addEventListener('click', (ev) => {
+        if (!ev.target.closest('.msg-more-wrap')) closeAllMoreMenus();
+      });
+
+      const flashCopied = (btn) => {
+        if (!btn) return;
+        const tip = btn.querySelector('.msg-action-tooltip');
+        btn.classList.add('show-tooltip');
+        if (tip) tip.classList.add('show');
+        clearTimeout(btn._tipTimer);
+        btn._tipTimer = setTimeout(() => { btn.classList.remove('show-tooltip'); if (tip) tip.classList.remove('show'); }, 1200);
+      };
+
+      const getMsgData = (el) => {
+        const actions = el ? el.closest('.msg-actions') : null;
+        const enc = actions ? actions.getAttribute('data-raw-md') : '';
+        return this.decodeMsgData(enc);
+      };
+
+      const stopSpeech = (speakBtn = null) => {
+        try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch {}
+        wrap.querySelectorAll('[data-msg-action="speak"].speaking').forEach(b => {
+          b.classList.remove('speaking');
+          b.setAttribute('title', 'Read aloud');
+          b.setAttribute('aria-label', 'Read aloud');
+          b.innerHTML = this._iconSpeaker();
+        });
+      };
+
       wrap.addEventListener('click', async (e) => {
+        const msgActionBtn = e.target.closest('[data-msg-action]');
+        if (msgActionBtn) {
+          const action = msgActionBtn.getAttribute('data-msg-action');
+          // let copy-code buttons inside actions? none. but guard:
+          if (action) {
+            e.preventDefault();
+            const msgEl = msgActionBtn.closest('.chat-msg.assistant');
+            const raw = getMsgData(msgActionBtn);
+
+            if (action === 'thumb-up' || action === 'thumb-down') {
+              const up = msgEl ? msgEl.querySelector('[data-msg-action="thumb-up"]') : null;
+              const down = msgEl ? msgEl.querySelector('[data-msg-action="thumb-down"]') : null;
+              if (action === 'thumb-up') {
+                const active = msgActionBtn.classList.toggle('active');
+                msgActionBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                if (active && down) { down.classList.remove('active'); down.setAttribute('aria-pressed', 'false'); }
+              } else {
+                const active = msgActionBtn.classList.toggle('active');
+                msgActionBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                if (active && up) { up.classList.remove('active'); up.setAttribute('aria-pressed', 'false'); }
+              }
+              return;
+            }
+
+            if (action === 'regenerate') {
+              await this.regenerateAssistantMessage(msgEl);
+              return;
+            }
+
+            if (action === 'copy') {
+              try {
+                await navigator.clipboard.writeText(raw);
+                flashCopied(msgActionBtn);
+                if (window.Utils && Utils.toast) Utils.toast('Copied', 'success');
+              } catch {
+                if (window.Utils && Utils.toast) Utils.toast('Copy failed', 'error');
+              }
+              return;
+            }
+
+            if (action === 'more') {
+              const menu = msgActionBtn.parentElement ? msgActionBtn.parentElement.querySelector('.msg-more-menu') : null;
+              if (menu) {
+                const willOpen = menu.classList.contains('hidden');
+                closeAllMoreMenus(willOpen ? menu : null);
+                menu.classList.toggle('hidden', !willOpen);
+                msgActionBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+              }
+              return;
+            }
+
+            if (action === 'copy-raw') {
+              try {
+                await navigator.clipboard.writeText(raw);
+                if (window.Utils && Utils.toast) Utils.toast('Copied raw Markdown', 'success');
+              } catch {
+                if (window.Utils && Utils.toast) Utils.toast('Copy failed', 'error');
+              }
+              closeAllMoreMenus();
+              return;
+            }
+
+            if (action === 'export-md') {
+              try {
+                const blob = new Blob([raw], { type: 'text/markdown;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `apex-response-${Date.now()}.md`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              } catch (err) {
+                if (window.Utils && Utils.toast) Utils.toast('Export failed', 'error');
+              }
+              closeAllMoreMenus();
+              return;
+            }
+
+            if (action === 'speak') {
+              const isSpeaking = msgActionBtn.classList.contains('speaking');
+              if (isSpeaking) {
+                stopSpeech();
+                return;
+              }
+              stopSpeech();
+              try {
+                if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) throw new Error('Speech synthesis not supported');
+                const text = this.stripMarkdownToPlainText(raw);
+                if (!text) { if (window.Utils && Utils.toast) Utils.toast('Nothing to read', 'info'); return; }
+                const u = new SpeechSynthesisUtterance(text);
+                u.onend = () => stopSpeech();
+                u.onerror = () => stopSpeech();
+                msgActionBtn.classList.add('speaking');
+                msgActionBtn.setAttribute('title', 'Stop reading');
+                msgActionBtn.setAttribute('aria-label', 'Stop reading');
+                msgActionBtn.innerHTML = this._iconStop();
+                window.speechSynthesis.speak(u);
+              } catch {
+                if (window.Utils && Utils.toast) Utils.toast('Read aloud unavailable', 'error');
+              }
+              return;
+            }
+          }
+        }
+
         const copyBtn = e.target.closest('[data-copy-code="1"]');
         if (copyBtn) {
           e.preventDefault();
@@ -408,11 +549,67 @@
       return html;
     },
 
-    renderBadges(badges) {
-      const arr = (badges || []).filter(Boolean);
-      if (!arr.length) return '';
-      return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(b)}</span>`).join('')}</div>`;
+    stripMarkdownToPlainText(md) {
+      let s = String(md || '').replace(/\r\n?/g, '\n');
+      // remove fenced code blocks but keep inner text
+      s = s.replace(/```[^\n`]*\n?([\s\S]*?)```/g, (_, inner) => '\n' + String(inner || '') + '\n');
+      // inline code
+      s = s.replace(/`([^`]+)`/g, '$1');
+      // images/links
+      s = s.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+      s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+      // headings / blockquotes / lists markers
+      s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+      s = s.replace(/^\s{0,3}>\s?/gm, '');
+      s = s.replace(/^\s*[-*+]\s+/gm, '');
+      s = s.replace(/^\s*\d+\.\s+/gm, '');
+      // emphasis / strike / html
+      s = s.replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1');
+      s = s.replace(/<[^>]+>/g, '');
+      // collapse whitespace
+      s = s.replace(/\n{3,}/g, '\n\n').trim();
+      return s;
     },
+
+    encodeMsgData(text) {
+      try { return btoa(unescape(encodeURIComponent(String(text || '')))); } catch { try { return btoa(String(text || '')); } catch { return ''; } }
+    },
+
+    decodeMsgData(data) {
+      if (!data) return '';
+      try { return decodeURIComponent(escape(atob(String(data)))); } catch { try { return atob(String(data)); } catch { return ''; } }
+    },
+
+    renderMessageActions(rawContent) {
+      const enc = this.escapeHtml(this.encodeMsgData(rawContent || ''));
+      return `<div class="msg-actions" data-raw-md="${enc}">
+        <div class="msg-actions-left">
+          <button type="button" class="msg-action-btn" data-msg-action="thumb-up" title="Good response" aria-label="Good response" aria-pressed="false">${this._iconThumbUp()}</button>
+          <button type="button" class="msg-action-btn" data-msg-action="thumb-down" title="Bad response" aria-label="Bad response" aria-pressed="false">${this._iconThumbDown()}</button>
+          <button type="button" class="msg-action-btn" data-msg-action="regenerate" title="Regenerate" aria-label="Regenerate">${this._iconRefresh()}</button>
+          <button type="button" class="msg-action-btn" data-msg-action="copy" title="Copy" aria-label="Copy response">${this._iconCopy()}<span class="msg-action-tooltip">Copied</span></button>
+          <div class="msg-more-wrap">
+            <button type="button" class="msg-action-btn" data-msg-action="more" title="More" aria-label="More actions" aria-expanded="false">${this._iconMore()}</button>
+            <div class="msg-more-menu hidden" role="menu">
+              <button type="button" class="msg-more-item" data-msg-action="copy-raw" role="menuitem">Copy raw Markdown</button>
+              <button type="button" class="msg-more-item" data-msg-action="export-md" role="menuitem">Export as .md</button>
+            </div>
+          </div>
+        </div>
+        <div class="msg-actions-right">
+          <button type="button" class="msg-action-btn" data-msg-action="speak" title="Read aloud" aria-label="Read aloud">${this._iconSpeaker()}</button>
+        </div>
+      </div>
+      <div class="msg-disclaimer">Apex Studio is AI and can make mistakes.</div>`;
+    },
+
+    _iconThumbUp() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14Z"/><path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>'; },
+    _iconThumbDown() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10Z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>'; },
+    _iconRefresh() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>'; },
+    _iconCopy() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'; },
+    _iconMore() { return '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>'; },
+    _iconSpeaker() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>'; },
+    _iconStop() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>'; },
 
     isWelcomeMessage(role, content) {
       if (role !== 'assistant') return false;
@@ -452,8 +649,10 @@
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
       const mode = (opts && opts.mode) || this.getAgentMode();
       const rendered = (role === 'assistant') ? this.renderMessageContent(content, { mode, applied: opts.applied || [] }) : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><div class="chat-content">${rendered}</div>${this.renderBadges(badges)}`;
+      const contentWrap = (role === 'assistant') ? `<div class="chat-content">${rendered}</div>` : rendered;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${contentWrap}${this.renderBadges(badges)}`;
       wrap.appendChild(div);
+      if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
       wrap.scrollTop = wrap.scrollHeight;
 
       // Persist message to active chat session (never persist welcome/placeholder or when explicitly disabled)
@@ -523,6 +722,7 @@
           const badgeArr = Array.isArray(badges) ? badges : [];
           if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badgeArr);
           div.classList.remove('streaming');
+          Agent.attachMessageActions(div, full);
           wrap.scrollTop = wrap.scrollHeight;
           if (opts.persist !== false) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
           return full;
@@ -594,6 +794,32 @@
       }
     },
 
+    async regenerateAssistantMessage(msgEl) {
+      if (!msgEl || this.isGenerating) return;
+      const prompt = this._lastUserPrompt || '';
+      if (!prompt.trim()) { if (window.Utils && Utils.toast) Utils.toast('No previous prompt to regenerate', 'info'); return; }
+      const attachments = Array.isArray(this._lastUserAttachments) ? this._lastUserAttachments : [];
+      const wrap = document.getElementById('chatMessages');
+      if (!wrap) return;
+      // stop speech if this message is being read
+      try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch {}
+      msgEl.remove();
+      this.setGenerating(true);
+      const currentMode = this.getAgentMode();
+      const streamBubble = this.createStreamingAssistantBubble('chat', { mode: currentMode });
+      try {
+        await this.runPrompt(prompt, { fromUI: false, streamBubble, attachments: attachments.slice() });
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        console.error('Agent regenerate error:', e);
+        try { if (window.AppState && typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions(); } catch {}
+        if (streamBubble) streamBubble.setError(`Error: ${msg}`);
+        else this.addMessage('assistant', `Error: ${msg}`, 'error', [], { mode: currentMode });
+      } finally {
+        this.setGenerating(false);
+      }
+    },
+
     async sendFromUI() {
       if (this.isGenerating) return;
       const input = document.getElementById('chatInput');
@@ -628,6 +854,9 @@
       }
       const userDisplay = prompt || (chatAttachments.length ? `[Attached ${chatAttachments.length} file${chatAttachments.length === 1 ? '' : 's'}: ${chatAttachments.map(a => a && a.name).filter(Boolean).join(', ')}]` : '');
       this.addMessage('user', userDisplay);
+      // Save last prompt/attachments for Regenerate
+      this._lastUserPrompt = prompt;
+      this._lastUserAttachments = Array.isArray(chatAttachments) ? chatAttachments.slice() : [];
       // Immediate animated "Thinking..." pulse inside assistant bubble
       const currentMode = this.getAgentMode();
       const streamBubble = this.createStreamingAssistantBubble('chat', { mode: currentMode });
