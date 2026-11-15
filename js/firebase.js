@@ -169,34 +169,14 @@
     openSignInModal() { const m = document.getElementById('signInModal'); if (m) { m.classList.remove('hidden'); m.classList.add('flex'); } },
     closeSignInModal() { const m = document.getElementById('signInModal'); if (m) { m.classList.add('hidden'); m.classList.remove('flex'); } },
     openAccountModal() { if (confirm('Sign out of ' + ((this.user && (this.user.email || this.user.displayName)) || 'account') + '?')) this.signOut(); },
-    async signInWithWebPopupFallback() {
-      if (!this.auth) return;
-      const provider = new firebase.auth.GoogleAuthProvider();
-      try {
-        await this.auth.signInWithPopup(provider);
-        this.closeSignInModal();
-        if (window.Utils) Utils.toast('Signed in with Google', 'success');
-      } catch (e) {
-        if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/cancelled-popup-request')) {
-          try { await this.auth.signInWithRedirect(provider); }
-          catch (e2) { if (window.Utils) Utils.toast('Google sign-in failed: ' + (e2.message || e2), 'error'); }
-        } else if (e && e.code !== 'auth/popup-closed-by-user') {
-          if (window.Utils) Utils.toast('Google sign-in failed: ' + (e.message || e), 'error');
-        }
-      }
-    },
-
     async signInWithGoogle() {
       if (!this.auth) return;
       const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
-      if (isNative) {
+      const nativePlugin = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication) || null;
+      if (isNative && nativePlugin && typeof nativePlugin.signInWithGoogle === 'function') {
         try {
-          const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
-          if (!plugin || typeof plugin.signInWithGoogle !== 'function') {
-            throw new Error('Native FirebaseAuthentication plugin not available');
-          }
-          const result = await plugin.signInWithGoogle();
-          const credentialData = result && result.credential ? result.credential : {};
+          const result = await nativePlugin.signInWithGoogle();
+          const credentialData = result && result.credential ? result.credential : (result || {});
           const idToken = credentialData.idToken || credentialData.id_token || result.idToken || result.id_token || null;
           if (!idToken) throw new Error('No Google ID token returned from native sign-in');
           const accessToken = credentialData.accessToken || credentialData.access_token || null;
@@ -206,16 +186,35 @@
           if (window.Utils) Utils.toast('Signed in with Google', 'success');
           return;
         } catch (e) {
-          const msg = String((e && (e.message || e.code || e)) || '').toLowerCase();
-          if (msg.includes('plugin not available') || msg.includes('not implemented') || msg.includes('unimplemented') || msg.includes('firebaseauthentication')) {
-            return this.signInWithWebPopupFallback();
-          }
           if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
-          else console.error('[Firebase] Google sign-in failed', e);
+          else console.error('[Firebase] Native Google sign-in failed', e);
           return;
         }
       }
-      return this.signInWithWebPopupFallback();
+
+      // Web / desktop (or native WebView without plugin): popup only. Never use redirect in Capacitor WebView.
+      const provider = new firebase.auth.GoogleAuthProvider();
+      try {
+        await this.auth.signInWithPopup(provider);
+        this.closeSignInModal();
+        if (window.Utils) Utils.toast('Signed in with Google', 'success');
+      } catch (e) {
+        if (e && e.code === 'auth/popup-closed-by-user') return;
+        if (isNative) {
+          if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+          return;
+        }
+        if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/cancelled-popup-request')) {
+          try {
+            await this.auth.signInWithRedirect(provider);
+            return;
+          } catch (e2) {
+            if (window.Utils) Utils.toast('Google sign-in failed: ' + (e2 && e2.message ? e2.message : e2), 'error');
+            return;
+          }
+        }
+        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+      }
     },
     async signInWithEmail() {
       if (!this.auth) return; const email = ((document.getElementById('authEmail')||{}).value||'').trim(); const pass = (document.getElementById('authPassword')||{}).value||'';

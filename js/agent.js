@@ -1939,12 +1939,12 @@
         }
       }
 
+      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       let contextBlock = this.collectWorkspaceSummary(prompt, {
         mode: this.getAgentMode(),
         attachments,
         attachWorkspaceContext: !!(AppState && AppState.settings && AppState.settings.attachWorkspaceContext)
       });
-      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       if (attachments.length && window.Workspace && typeof Workspace.buildAgentAttachmentContext === 'function') {
         const attText = Workspace.buildAgentAttachmentContext(attachments);
         if (attText) contextBlock = contextBlock ? (contextBlock + `\n\n${attText}`) : attText;
