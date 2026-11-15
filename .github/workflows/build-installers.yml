@@ -98,10 +98,7 @@ jobs:
             -dname "CN=ApexStudioDebug,OU=Dev,O=DrippyDee,L=Ibadan,S=Oyo,C=NG"
           cp android/app/debug.keystore ~/.android/debug.keystore
           echo "===== Android debug keystore SHA-1 (use this for Firebase/Google Sign-In) ====="
-          keytool -list -v \
-            -keystore android/app/debug.keystore \
-            -alias androiddebugkey \
-            -storepass android | sed -n '/Certificate fingerprints:/,/Signature algorithm name:/p'
+          keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android | tee -a $GITHUB_STEP_SUMMARY
           echo "===== End Android debug keystore fingerprints ====="
 
           echo "===== Patching Android Gradle for deterministic debug keystore and Google Services ====="
