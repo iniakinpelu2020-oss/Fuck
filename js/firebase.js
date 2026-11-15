@@ -268,7 +268,7 @@
         try { sessionStorage.setItem('apex_google_oauth_nonce', nonce); } catch {}
         const params = new URLSearchParams({
           client_id: this.googleClientId,
-          redirect_uri: window.location.origin,
+          redirect_uri: 'https://apexaicoder.pages.dev',
           response_type: 'id_token',
           scope: 'openid email profile',
           nonce,
