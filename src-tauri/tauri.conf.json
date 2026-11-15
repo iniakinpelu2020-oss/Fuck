@@ -10,6 +10,7 @@
     "windows": [
       {
         "title": "Apex Studio",
+        "url": "https://apexaicoder.pages.dev",
         "width": 1360,
         "height": 860,
         "resizable": true,
