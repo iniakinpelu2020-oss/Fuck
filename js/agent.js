@@ -585,7 +585,7 @@
       s = s.replace(/^\s{0,3}#{1,6}\s+/gm, '');
       s = s.replace(/^\s{0,3}>\s?/gm, '');
       s = s.replace(/^\s*[-*+]\s+/gm, '');
-      s = s.replace(/^\s*\d+\.\s+/gm, '');
+      s = s.replace(/^\s*(\d+)\.\s+/gm, '$1. ');
       // emphasis / strike / html
       s = s.replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1');
       s = s.replace(/<[^>]+>/g, '');
@@ -1657,7 +1657,9 @@
 
     collectWorkspaceSummary(prompt = '', opts = {}) {
       const mode = String(opts.mode || this.getAgentMode() || 'agent').toLowerCase();
-      const attach = !!(opts.attachWorkspaceContext ?? (AppState && AppState.settings && AppState.settings.attachWorkspaceContext));
+      const attachSetting = !!(opts.attachWorkspaceContext ?? (AppState && AppState.settings && AppState.settings.attachWorkspaceContext));
+      const attachEl = (typeof document !== 'undefined') ? (document.getElementById('attachWorkspaceContext') || document.getElementById('agentAttachWorkspaceContext')) : null;
+      const attach = attachSetting || !!(attachEl && attachEl.checked);
       const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       const hasAttachments = attachments.length > 0;
       const starterPaths = new Set(['src/index.js', 'notes.txt']);
@@ -1666,6 +1668,7 @@
       const wsName = (AppState && AppState.workspaceName) || 'Workspace';
       const text = String(prompt == null ? '' : prompt);
       const lower = text.toLowerCase();
+      const trimmed = text.trim();
 
       const norm = (p) => String(p || '').replace(/^\/+/, '').trim();
       const mentionsPath = (p) => {
@@ -1685,20 +1688,33 @@
       const inspectEditIntent = /\b(inspect|read|open|show|view|see|look at|check|review|explain|describe|summari[sz]e|what('?s| is) in|contents?|inside|print|cat|edit|modify|update|change|fix|refactor|rewrite|rename|implement|add|remove|delete|create|write|append|debug|test|run|build|diff|compare)\b/i.test(text);
       const asksAboutWorkspace = /\b(what files|which files|list files|show files|file tree|project files|workspace files|project structure|workspace structure|what('?s| is) in (this|the|my) (project|workspace|repo|folder|directory)|what do i have|what's here)\b/i.test(text);
 
-      // Chat mode: no starter/default file contents unless explicitly mentioned or Attach Workspace Context is on.
-      // For casual/general questions without file/code mentions, do not dump workspace contents.
-      if (mode === 'chat' && !attach && !hasAttachments && anyMentioned.length === 0 && !mentionsActive) {
-        if (!asksAboutWorkspace) return '';
-        const treeOnly = files.slice(0, 120).map(p => `- ${p}`).join('\n');
-        let outTree = `Workspace: ${wsName}\nActive file: ${activePath || '(none)'}\nFiles (${files.length} total):\n${treeOnly || '- (empty)'}`;
-        if (files.length > 120) outTree += `\n- ... (${files.length - 120} more)`;
-        return outTree;
+      const isCasualConversation = /^(?:hi|hello|hey|yo|wagwan|sup|howdy|hola|good\s+(?:morning|afternoon|evening|night)|gm|gn|morning|afternoon|evening|how are (?:you|u|ya)(?: doing| today)?|how'?s it going|what'?s up|wassup|whats up|wyd|is that all|that'?s all|anything else|thanks?|thank you|thx|ty|ok|okay|k|kk|cool|nice|great|awesome|sure|alright|aight|bet|got it|understood|perfect|sounds good|lol|haha|lmao|yes|no|yep|yeah|nah|nope)[\s!?.…]*$/i.test(trimmed);
+      const hasFileToken = /(?:^|[\s"'`(])(?:\.?\/)?[\w@.-]+\/[\w@./-]+|\b[\w.-]+\.(?:js|jsx|ts|tsx|mjs|cjs|json|html|htm|css|scss|sass|less|md|markdown|txt|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|fish|yml|yaml|toml|xml|svg|sql|csv|vue|svelte|astro|env|lock)\b/i.test(text);
+      const hasCodingOrWorkspaceTaskIntent = asksAboutWorkspace || hasFileToken || /\b(code|coding|file|files|folder|folders|directory|directories|dir\b|path|paths|project|projects|workspace|workspaces|repo|repository|repositories|codebase|source|src\b|bug|bugs|error|errors|exception|exceptions|crash|crashes|fix|fixing|debug|debugging|refactor|refactoring|rewrite|rewriting|implement|implementing|implementation|function|functions|func\b|class\b|classes|method|methods|variable|variables|constant|constants|component|components|module|modules|import|imports|export|exports|package|packages|dependency|dependencies|library|libraries|framework|api|apis|endpoint|endpoints|route|routes|server|servers|client|clients|database|databases|db\b|query|queries|schema|script|scripts|build|compile|compiling|test|tests|testing|lint|linting|format|formatting|run|running|execute|executing|deploy|deployment|install|installing|setup|configure|config|configuration|terminal|command|commands|shell|git|github|commit|branch|merge|pull|push|npm|pnpm|yarn|bun|pip|node|deno|python|java\b|rust\b|golang|php\b|ruby\b|typescript|javascript|html|css|scss|sass|jsx|tsx|json|yaml|yml|toml|sql|markdown|react|next|vue|svelte|angular|tailwind|vite|webpack|app|apps|application|applications|website|webpage|page|pages|ui|ux|interface|layout|style|styles|button|form|input|feature|features|logic|algorithm|create|creating|add|adding|write|writing|edit|editing|update|updating|modify|modifying|change|changing|rename|renaming|move|moving|delete|deleting|remove|removing|replace|replacing|generate|generating|scaffold|scaffolding|open|opening|read|reading|show|showing|list|listing|find|finding|search|searching|grep|inspect|inspecting|review|reviewing|analy[sz]e|analyzing)\b/i.test(text);
+
+      const explicitFileRef = anyMentioned.length > 0 || mentionsActive;
+
+      // Never inject workspace files/tree on casual greetings/conversational messages unless explicitly opted-in or referenced.
+      if (!attach && !hasAttachments && !explicitFileRef) {
+        if (isCasualConversation) return '';
+        if (mode === 'chat') {
+          // Chat: only inject for explicit workspace-structure questions (tree only). Generic coding/chat questions get no workspace dump.
+          if (!asksAboutWorkspace) return '';
+        } else {
+          // Agent/Edit: inject workspace file tree only when user asks a coding/workspace task.
+          if (!hasCodingOrWorkspaceTaskIntent) return '';
+        }
       }
 
       // File tree (names only)
       const tree = files.slice(0, 120).map(p => `- ${p}`).join('\n');
       let out = `Workspace: ${wsName}\nActive file: ${activePath || '(none)'}\nFiles (${files.length} total):\n${tree || '- (empty)'}`;
       if (files.length > 120) out += `\n- ... (${files.length - 120} more)`;
+
+      // Chat mode: workspace-structure question with no explicit file refs/attachments/toggle -> tree only, no contents
+      if (mode === 'chat' && !attach && !hasAttachments && !explicitFileRef) {
+        return out;
+      }
 
       const includeContentFor = new Set();
       const canIncludePath = (p) => {
@@ -1710,27 +1726,21 @@
         const mentioned = mentionsPath(path) || (path === activePath && mentionsActive);
         if (attach) return true; // explicit toggle opt-in
         if (mode === 'chat') {
-          // include contents only when file is explicitly mentioned
+          // include contents only when file is explicitly mentioned/referenced
           return mentioned;
         }
-        // Agent/Edit: only inject file tree by default; include contents only when user asks to inspect/edit them
+        // Agent/Edit: file tree by default; include contents only when user asks to inspect/edit them.
+        // Never inject full contents of starter placeholder files unless explicitly asked to inspect/edit them.
+        if (isStarter) return mentioned && (inspectEditIntent || asksAboutWorkspace || mentionsActiveRef);
         if (mentioned) return inspectEditIntent || asksAboutWorkspace || mentionsActiveRef;
         return false;
       };
 
-      // In chat mode with explicit attach toggle, include active file content (even starter) for convenience
       if (attach && activePath && AppState.files.has(activePath)) includeContentFor.add(activePath);
-      // Active file: in agent/edit only when relevant; in chat only when mentioned/toggle (toggle handled above)
-      if (!includeContentFor.has(activePath) && activePath) {
-        if (mode === 'chat') {
-          if ((mentionsPath(activePath) || mentionsActiveRef) && canIncludePath(activePath)) includeContentFor.add(activePath);
-        } else {
-          // agent/edit: no auto-dump of active/starter content unless asked to inspect/edit
-          if (canIncludePath(activePath)) includeContentFor.add(activePath);
-        }
+      if (explicitFileRef && activePath && !includeContentFor.has(activePath) && canIncludePath(activePath)) {
+        includeContentFor.add(activePath);
       }
 
-      // Explicitly mentioned files
       for (const p of anyMentioned.slice(0, 6)) {
         if (!p || includeContentFor.has(p)) continue;
         if (canIncludePath(p)) includeContentFor.add(p);
@@ -1940,10 +1950,11 @@
       }
 
       const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
+      const attachCtx = !!(AppState && AppState.settings && AppState.settings.attachWorkspaceContext) || !!((typeof document !== 'undefined') && ((document.getElementById('attachWorkspaceContext') || document.getElementById('agentAttachWorkspaceContext') || {}).checked));
       let contextBlock = this.collectWorkspaceSummary(prompt, {
         mode: this.getAgentMode(),
         attachments,
-        attachWorkspaceContext: !!(AppState && AppState.settings && AppState.settings.attachWorkspaceContext)
+        attachWorkspaceContext: attachCtx
       });
       if (attachments.length && window.Workspace && typeof Workspace.buildAgentAttachmentContext === 'function') {
         const attText = Workspace.buildAgentAttachmentContext(attachments);

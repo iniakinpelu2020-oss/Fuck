@@ -48,10 +48,8 @@
       this.loadActiveChat();
 
       if (AppState.files.size === 0) {
-        AppState.workspaceName = 'Starter Workspace';
-        AppState.upsertFile('src/index.js', "console.log('Hello from Apex Studio');\n");
-        AppState.upsertFile('notes.txt', 'Welcome to Apex Studio.\n\nAsk the agent to build, search, analyze, or automate.\nOpen Workspace/Editor from the drawer (☰) when needed.\nConfigure models, keys, MCP, RAG, and integrations in Settings.\n');
-        AppState.setActiveFile('src/index.js');
+        AppState.workspaceName = 'Workspace';
+        AppState.activeFilePath = null;
         AppState.emit('workspace:changed');
       } else {
         AppState.setActiveFile(AppState.activeFilePath || AppState.files.keys().next().value || null);
