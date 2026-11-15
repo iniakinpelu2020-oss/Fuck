@@ -5,7 +5,8 @@
     apiKeys: 'aether.apikeys.v1',
     mcp: 'aether.mcp.v1',
     workspaceMem: 'aether.workspace.memory.v1',
-    chatSessions: 'aether.chat.sessions.v1'
+    chatSessions: 'aether.chat.sessions.v1',
+    activeChat: 'aether.chat.active.v1'
   };
 
   const DEFAULT_N8N_WEBHOOK_URL = 'https://drippydee.app.n8n.cloud/webhook/apex-agent';
@@ -28,7 +29,10 @@ Behavior:
     ragK: 6,
     terminalWs: '',
     commandTimeoutSec: 600,
-    webhookUrl: '',
+    webhookUrl: DEFAULT_N8N_WEBHOOK_URL || '',
+    n8nWebhookUrl: DEFAULT_N8N_WEBHOOK_URL || '',
+    authHeaderName: '',
+    authHeaderValue: '',
     apiMode: 'managed',
     directProvider: 'gemini',
     headerPreset: '',
@@ -69,6 +73,11 @@ Behavior:
       if (!Array.isArray(this.mcpServers)) this.mcpServers = [];
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       this.sanitizeChatSessions();
+      if (!String(this.settings.webhookUrl || '').trim()) this.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
+      if (!String(this.settings.n8nWebhookUrl || '').trim()) this.settings.n8nWebhookUrl = this.settings.webhookUrl;
+      const hasUrl = (u) => this.mcpServers.some(x => x && String(x.url||'').replace(/\/$/,'') === u.replace(/\/$/,''));
+      if (!hasUrl('https://fuck.iniakinpelu2020.workers.dev')) this.mcpServers.unshift({ name: 'apex-mcp', url: 'https://fuck.iniakinpelu2020.workers.dev', transport: 'http' });
+      if (!hasUrl('https://fuck.iniakinpelu2020.workers.dev/n8n-mcp')) this.mcpServers.push({ name: 'n8n-mcp', url: 'https://fuck.iniakinpelu2020.workers.dev/n8n-mcp', transport: 'http' });
     },
 
     isWelcomeMessage(msg) {
@@ -148,32 +157,37 @@ Behavior:
     subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
     emit(event, payload) { for (const fn of this.listeners) try { fn(event, payload); } catch (e) { console.error(e); } },
 
-    saveSettings() { localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(this.settings)); },
-    saveVault() { localStorage.setItem(STORAGE_KEYS.vault, JSON.stringify(this.vault)); },
-    saveApiKeys(keys) { this.apiKeys = keys; localStorage.setItem(STORAGE_KEYS.apiKeys, JSON.stringify(keys)); },
-    saveMcp() { localStorage.setItem(STORAGE_KEYS.mcp, JSON.stringify(this.mcpServers)); },
+    saveSettings() { localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(this.settings)); this.emit('settings:changed'); if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushConfig(); } catch {} },
+    saveVault() { localStorage.setItem(STORAGE_KEYS.vault, JSON.stringify(this.vault)); if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushConfig(); } catch {} },
+    saveApiKeys(keys) { this.apiKeys = keys; localStorage.setItem(STORAGE_KEYS.apiKeys, JSON.stringify(keys)); if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushConfig(); } catch {} },
+    saveMcp() { localStorage.setItem(STORAGE_KEYS.mcp, JSON.stringify(this.mcpServers)); this.emit('mcp:changed'); if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushConfig(); } catch {} },
 
     // Chat session management
     saveChatSessions() {
       try { this.sanitizeChatSessions(); } catch {}
       try { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions || [])); } catch (e) { console.error('saveChatSessions failed', e); }
+      this.emit('chats:changed');
     },
-    saveActiveChatId(id) { this.activeChatId = id; localStorage.setItem('aether.chat.active.v1', id); },
+    saveActiveChatId(id) { this.activeChatId = id; try { localStorage.setItem('aether.chat.active.v1', id || ''); } catch {} this.emit('chat:active', { id }); },
 
     getChat(id) { if (!Array.isArray(this.chatSessions)) this.chatSessions = []; return this.chatSessions.find(s => s.id === id) || null; },
+    getActiveChat() { return this.getChat(this.activeChatId); },
     createChat(title = 'New chat') {
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const session = { id, title, pinned: false, updatedAt: Date.now(), messages: [] };
       this.chatSessions.unshift(session);
+      this.saveActiveChatId(id);
       this.saveChatSessions();
+      if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushChat(session); } catch {}
       return session;
     },
     updateChat(id, patch) {
-      const s = this.getChat(id);
-      if (!s) return false;
-      Object.assign(s, patch, { updatedAt: Date.now() });
+      const session = this.getChat(id);
+      if (!session) return false;
+      Object.assign(session, patch, { updatedAt: Date.now() });
       this.saveChatSessions();
+      if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushChat(session); } catch {}
       return true;
     },
     deleteChat(id) {
@@ -183,9 +197,10 @@ Behavior:
       const wasActive = this.activeChatId === id;
       this.chatSessions.splice(idx, 1);
       this.saveChatSessions();
+      if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.deleteChat(id); } catch {}
       if (wasActive) {
         this.activeChatId = this.chatSessions.length ? this.chatSessions[0].id : null;
-        localStorage.setItem('aether.chat.active.v1', this.activeChatId || '');
+        this.saveActiveChatId(this.activeChatId || '');
       }
       return true;
     },

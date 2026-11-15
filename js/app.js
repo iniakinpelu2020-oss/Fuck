@@ -16,6 +16,7 @@
       Integrations.init();
       if (window.Workspace && Workspace.init) Workspace.init();
       Agent.init();
+      try { if (window.FirebaseSync && typeof FirebaseSync.init === 'function') FirebaseSync.init(); } catch(e) { console.error('Firebase init', e); }
 
       // Chat history: always start a fresh page load on a new blank chat unless URL specifies one
       this.bindChatHistory();

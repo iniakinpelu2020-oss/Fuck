@@ -8,6 +8,7 @@
       if (btnDiscover) btnDiscover.addEventListener('click', () => this.discoverAll());
       const cfg = (AppState.mcpServers && AppState.mcpServers.length) ? AppState.mcpServers : [
         { name: 'apex-mcp', url: 'https://fuck.iniakinpelu2020.workers.dev', transport: 'http' },
+        { name: 'n8n-mcp', url: 'https://fuck.iniakinpelu2020.workers.dev/n8n-mcp', transport: 'http' },
         { name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }
       ];
       const cfgInput = document.getElementById('mcpConfigInput');
@@ -377,4 +378,5 @@
     }
   };
   window.MCP = MCP;
+  window.MCPClient = MCP;
 })();

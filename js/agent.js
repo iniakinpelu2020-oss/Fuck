@@ -357,13 +357,16 @@
     getEffectiveSystemPrompt(mode) {
       const m = mode || this.getAgentMode();
       const base = String((window.AppState && AppState.settings && AppState.settings.systemPrompt) || '').trim();
+      const mcpInstr = '\n\n--- Autonomous MCP tool calling ---\n' +
+        'When you need to use an MCP tool, emit either (1) native OpenAI-compatible tool_calls, (2) a fenced ```json:mcp``` block, or (3) a raw JSON object {"name":"mcp__<server>__<tool>","arguments":{...}}. ' +
+        'The runtime intercepts it, executes via MCPClient.callTool(server, tool, args), renders a compact tool-execution status pill, appends the tool result to conversation history, and continues your turn automatically (up to 5 tool hops) until you produce a final plain-English response. Do not repeat the same tool call unnecessarily.';
       if (m === 'chat') {
-        return base + '\n\n--- Response Mode: Chat ---\n' +
+        return base + mcpInstr + '\n\n--- Response Mode: Chat ---\n' +
           'Reply in clear, helpful plain English. Use standard fenced Markdown code blocks (```language ... ```). ' +
-          'Do NOT emit ```json:edits``` blocks, do NOT emit structured action JSON for workspace/terminal/MCP/n8n automation, and do NOT claim to have modified files or run commands unless results are explicitly provided in context. ' +
+          'Do NOT emit ```json:edits``` blocks and do not claim to have modified files or run commands unless results are explicitly provided in context. ' +
           'If the user asks for code changes, provide the code in normal Markdown fenced blocks with explanations.';
       }
-      return base + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
+      return base + mcpInstr + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
         'When you need to create, update, or modify workspace files, return a fenced ```json:edits``` block with this shape:\n' +
         '{"edits":[{"path":"relative/path","content":"new full file content"}],"terminal":[{"command":"..."}],"notes":"short summary"}\n' +
         'Prefer precise, minimal edits. If no edits are needed, use an empty edits array or omit the block. Keep user-facing prose clean; the UI will present file changes as structured cards.';
@@ -375,6 +378,7 @@
       let s = String(text ?? '');
       // Remove json:edits fences and json fences that contain tool/action payloads
       s = s.replace(/```json:edits\s*[\s\S]*?```/gi, '');
+      s = s.replace(/```json:mcp\s*[\s\S]*?```/gi, '');
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
         if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
@@ -1562,9 +1566,17 @@
     parseAgentActions(text) {
       const actions = { edits: [], terminal: [], notes: '', mcp: [], n8n: null };
       if (!text) return actions;
-      const fences = [...text.matchAll(/```(?:json:edits|json)\s*([\s\S]*?)```/gi)];
+      const src = String(text || '');
+      const fences = [...src.matchAll(/```(json:edits|json:mcp|json)\s*([\s\S]*?)```/gi)];
       for (const m of fences) {
-        const obj = Utils.safeJsonParse(m[1], null);
+        const lang = String(m[1] || '').toLowerCase();
+        const obj = Utils.safeJsonParse(m[2], null);
+        if (!obj) continue;
+        if (lang === 'json:mcp') {
+          const calls = Array.isArray(obj) ? obj : (Array.isArray(obj.calls) ? obj.calls : [obj]);
+          for (const c of calls) if (c && (c.name || c.tool || c.server)) actions.mcp.push(c);
+          continue;
+        }
         if (obj && (Array.isArray(obj.edits) || Array.isArray(obj.terminal) || Array.isArray(obj.mcp) || obj.n8n || obj.notes)) {
           if (Array.isArray(obj.edits)) actions.edits.push(...obj.edits);
           if (Array.isArray(obj.terminal)) actions.terminal.push(...obj.terminal);
@@ -1573,6 +1585,17 @@
           if (obj.notes) actions.notes += (actions.notes ? '\n' : '') + obj.notes;
         }
       }
+      // raw MCP tool invocation object: {"name":"mcp__server__tool","arguments":{...}}
+      try {
+        const trimmed = src.trim();
+        if (/^\{[\s\S]*\}$/.test(trimmed)) {
+          const obj = Utils.safeJsonParse(trimmed, null);
+          if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+            const nm = String(obj.name || obj.tool || '');
+            if (/^mcp__/.test(nm) || (obj.server && (obj.tool || obj.name))) actions.mcp.push(obj);
+          }
+        }
+      } catch {}
       return actions;
     },
 
@@ -1841,11 +1864,11 @@
               let toolResultText = '';
               try {
                 const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
-                if (mcpTarget && window.MCP && typeof MCP.callTool === 'function') {
+                if (mcpTarget && (window.MCPClient || window.MCP) && typeof (window.MCPClient || window.MCP).callTool === 'function') {
                   const pillLabel = `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` (${argPreview})` : ''}...`;
                   const pill = this.addStatusPill(pillLabel, 'running');
                   try {
-                    const result = await MCP.callTool(mcpTarget.server, mcpTarget.tool, fargs);
+                    const result = await (window.MCPClient || window.MCP).callTool(mcpTarget.server, mcpTarget.tool, fargs);
                     toolResultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
                     execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` [${argPreview}]` : ''} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
                     this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} completed`, 'done');
@@ -1904,8 +1927,47 @@
       if (streamBubble && answer && !streamBubble.getText()) streamBubble.append(answer);
       if (!answer && streamBubble) answer = streamBubble.getText();
 
+      // autonomous MCP tool loop for text/json:mcp/raw MCP invocations (up to 5 hops)
+      try {
+        let _mcpHops = 0;
+        const _mcpClient = window.MCPClient || window.MCP;
+        while (_mcpHops < 5 && _mcpClient && typeof _mcpClient.callTool === 'function') {
+          const _acts = this.parseAgentActions(answer || '');
+          const _calls = Array.isArray(_acts.mcp) ? _acts.mcp : [];
+          if (!_calls.length) break;
+          _mcpHops++;
+          const _results = [];
+          for (const call of _calls) {
+            let server = call.server || call.serverName; let tool = call.tool || call.name || call.toolName;
+            const args = (typeof this.normalizeToolCallArgs === 'function') ? this.normalizeToolCallArgs(call.arguments || call.args || call.input || {}) : (call.arguments || call.args || {});
+            if ((!server || !tool) && call.name) {
+              const p = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
+              if (p) { server = p.server; tool = p.tool; }
+            }
+            if (!server || !tool) continue;
+            const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
+            try {
+              const result = await _mcpClient.callTool(server, tool, args);
+              const txt = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+              this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
+              execSummary.push(`MCP ${server}:${tool} result: ${txt.slice(0, 500)}`);
+              _results.push(`[MCP ${server}:${tool} RESULT]\n${txt}`);
+            } catch (e) {
+              const msg = e && e.message ? e.message : String(e);
+              this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
+              _results.push(`[MCP ${server}:${tool} ERROR]\n${msg}`);
+            }
+          }
+          if (!_results.length) break;
+          const cont = prompt + '\n\n[Autonomous MCP tool execution results]\n' + _results.join('\n\n').slice(0, 12000) + '\n\nContinue with these results and provide the final plain-English response. Do not repeat the same tool call unless necessary.';
+          const cres = await this.callLLM(cont, { stream: true, onDelta: (d) => { if (streamBubble) streamBubble.append(d); } });
+          answer = (cres && typeof cres === 'object') ? (cres.text || answer) : (String(cres || '') || answer);
+        }
+      } catch (e) { console.error('Autonomous MCP text loop error', e); }
+
       // 3) Execute structured actions (edits, in-browser/remote commands, MCP, n8n) from text blocks
       const actions = this.parseAgentActions(answer || '');
+      actions.mcp = []; // executed in autonomous loop
       let applied = [];
 
       // Workspace & Editor: apply edits, auto-open editor, RAG auto-indexes via state events
@@ -1948,7 +2010,7 @@
       }
 
       // MCP tool calls requested by agent in structured action blocks
-      if (actions.mcp && actions.mcp.length && window.MCP && MCP.callTool) {
+      if (actions.mcp && actions.mcp.length && (window.MCPClient || window.MCP) && (window.MCPClient || window.MCP).callTool) {
         for (const call of actions.mcp) {
           let server = call.server || call.serverName;
           let tool = call.tool || call.name || call.toolName;
@@ -1962,7 +2024,7 @@
           if (!server || !tool) continue;
           const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}${argPreview ? ` (${argPreview})` : ''}...`, 'running');
           try {
-            const result = await MCP.callTool(server, tool, args);
+            const result = await (window.MCPClient || window.MCP).callTool(server, tool, args);
             execSummary.push(`MCP ${server}:${tool}${argPreview ? ` [${argPreview}]` : ''} result: ${this.formatN8nBody(result).slice(0, 500)}`);
             this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
           } catch (e) {
