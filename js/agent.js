@@ -455,6 +455,9 @@
       if (p === 'groq') {
         return { name: 'Groq', provider: 'openai-compatible', endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile' };
       }
+      if (p === 'openai-compatible') {
+        return { name: 'OpenAI', provider: 'openai-compatible', endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' };
+      }
       if (p === 'custom') {
         return { name: 'Custom (OpenAI-compatible)', provider: 'openai-compatible', endpoint: '', model: '', requiresEndpointOverride: true };
       }
@@ -486,7 +489,7 @@
 
       if (mode === 'direct') {
         const dropdownVal = String(((document.getElementById('agentProvider') || {}).value || '')).toLowerCase();
-        const dprov = dropdownVal && dropdownVal !== 'openai-compatible' ? dropdownVal : String(s.directProvider || 'gemini').toLowerCase();
+        const dprov = dropdownVal || String(s.directProvider || 'gemini').toLowerCase();
         const cfg = this.getDirectProviderConfig(dprov);
         let provider = cfg.provider || 'openai-compatible';
         let endpoint = endpointOverride || cfg.endpoint || '';
@@ -764,6 +767,11 @@
       this.persistAgentSettings();
       const agentEndpointVal = String((document.getElementById('agentEndpoint') || { value: '' }).value || '').trim();
       const target = this.getLlmTarget(undefined, undefined, undefined, agentEndpointVal || undefined);
+      // Persist the dropdown provider so it survives reload
+      if (target.directProvider && target.directProvider !== 'openai-compatible') {
+        AppState.settings.directProvider = target.directProvider;
+        this.persistAgentSettings();
+      }
       const provider = target.provider || 'openai-compatible';
       const endpoint = target.endpoint;
       const model = target.model || '';
