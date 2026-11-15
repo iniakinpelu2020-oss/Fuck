@@ -104,12 +104,14 @@ jobs:
             -storepass android | sed -n '/Certificate fingerprints:/,/Signature algorithm name:/p'
           echo "===== End Android debug keystore fingerprints ====="
 
-          echo "===== Patching android/app/build.gradle to use deterministic debug keystore ====="
+          echo "===== Patching Android Gradle for deterministic debug keystore and Google Services ====="
           node -e '
             const fs = require("fs");
-            const file = "android/app/build.gradle";
-            if (!fs.existsSync(file)) { console.error("Gradle file not found:", file); process.exit(1); }
-            let gradle = fs.readFileSync(file, "utf8");
+            const appGradlePath = "android/app/build.gradle";
+            const rootGradlePath = "android/build.gradle";
+            if (!fs.existsSync(appGradlePath)) { console.error("Gradle file not found:", appGradlePath); process.exit(1); }
+            let gradle = fs.readFileSync(appGradlePath, "utf8");
+
             const signingBlock = `
     signingConfigs {
         debug {
@@ -126,8 +128,32 @@ jobs:
             if (/buildTypes\s*\{[\s\S]*?debug\s*\{/.test(gradle)) {
               gradle = gradle.replace(/(buildTypes\s*\{[\s\S]*?debug\s*\{)(?![\s\S]*?signingConfig\s+signingConfigs\.debug)/, "$1\n            signingConfig signingConfigs.debug");
             }
-            fs.writeFileSync(file, gradle, "utf8");
+
+            if (!/com\.google\.gms\.google-services/.test(gradle)) {
+              gradle += "\n\nif (file(\"google-services.json\").exists()) {\n    apply plugin: \"com.google.gms.google-services\"\n}\n";
+              console.log("Added conditional com.google.gms.google-services plugin to android/app/build.gradle");
+            } else {
+              console.log("com.google.gms.google-services already present in android/app/build.gradle");
+            }
+            fs.writeFileSync(appGradlePath, gradle, "utf8");
             console.log("Patched android/app/build.gradle for deterministic debug signing");
+
+            if (fs.existsSync(rootGradlePath)) {
+              let root = fs.readFileSync(rootGradlePath, "utf8");
+              if (!/com\.google\.gms:google-services/.test(root)) {
+                if (/dependencies\s*\{/.test(root)) {
+                  root = root.replace(/(dependencies\s*\{)/, "$1\n        classpath \"com.google.gms:google-services:4.4.2\"");
+                  fs.writeFileSync(rootGradlePath, root, "utf8");
+                  console.log("Added google-services classpath to android/build.gradle");
+                } else {
+                  console.warn("Could not find dependencies block in android/build.gradle; skipped classpath patch");
+                }
+              } else {
+                console.log("google-services classpath already present in android/build.gradle");
+              }
+            } else {
+              console.warn("android/build.gradle not found; skipped classpath patch");
+            }
           '
 
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
@@ -135,13 +161,16 @@ jobs:
           chmod +x android/gradlew
 
       - name: Write google-services.json
-        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
-          mkdir -p android/app
-          printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
-          echo "Wrote android/app/google-services.json from secret"
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            mkdir -p android/app
+            printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+            echo "Wrote android/app/google-services.json from secret"
+          else
+            echo "GOOGLE_SERVICES_JSON secret not set; skipping google-services.json"
+          fi
 
       - name: Build debug APK
         working-directory: android
