@@ -11,7 +11,8 @@
 
   const FB = {
     app: null, auth: null, db: null, user: null, ready: false,
-    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false,
+    googleClientId: '166973140410-1129i7oebval1719ji794135dt3g7c8i.apps.googleusercontent.com',
+    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false, _gisInitialized: false, _gisRendered: false,
 
     init() {
       try {
@@ -24,6 +25,7 @@
         this.ready = true;
         this.auth.onAuthStateChanged((user) => this.onAuthStateChanged(user));
         this.bindAuthUI();
+        this.initGoogleIdentity();
       } catch (e) { console.error('[Firebase] init failed', e); }
     },
 
@@ -162,58 +164,94 @@
       if (btn) btn.addEventListener('click', () => { if (this.user) this.openAccountModal(); else this.openSignInModal(); });
       const closeSignIn = document.getElementById('btnCloseSignIn'); if (closeSignIn) closeSignIn.addEventListener('click', () => this.closeSignInModal());
       const signInModal = document.getElementById('signInModal'); if (signInModal) signInModal.addEventListener('click', (e) => { if (e.target.id === 'signInModal') this.closeSignInModal(); });
-      const googleBtn = document.getElementById('btnGoogleSignIn'); if (googleBtn) googleBtn.addEventListener('click', () => this.signInWithGoogle());
       const emailForm = document.getElementById('emailAuthForm'); if (emailForm) emailForm.addEventListener('submit', (e) => { e.preventDefault(); this.signInWithEmail(); });
       const signUpBtn = document.getElementById('btnEmailSignUp'); if (signUpBtn) signUpBtn.addEventListener('click', () => this.signUpWithEmail());
     },
-    openSignInModal() { const m = document.getElementById('signInModal'); if (m) { m.classList.remove('hidden'); m.classList.add('flex'); } },
+    openSignInModal() {
+      const m = document.getElementById('signInModal');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); }
+      this.initGoogleIdentity();
+      this.renderGoogleButton();
+    },
     closeSignInModal() { const m = document.getElementById('signInModal'); if (m) { m.classList.add('hidden'); m.classList.remove('flex'); } },
     openAccountModal() { if (confirm('Sign out of ' + ((this.user && (this.user.email || this.user.displayName)) || 'account') + '?')) this.signOut(); },
-    async signInWithGoogle() {
-      if (!this.auth) return;
-      const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
-      const nativePlugin = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication) || null;
-      if (isNative && nativePlugin && typeof nativePlugin.signInWithGoogle === 'function') {
-        try {
-          const result = await nativePlugin.signInWithGoogle();
-          const credentialData = result && result.credential ? result.credential : (result || {});
-          const idToken = credentialData.idToken || credentialData.id_token || result.idToken || result.id_token || null;
-          if (!idToken) throw new Error('No Google ID token returned from native sign-in');
-          const accessToken = credentialData.accessToken || credentialData.access_token || null;
-          const credential = firebase.auth.GoogleAuthProvider.credential(idToken, accessToken);
-          await this.auth.signInWithCredential(credential);
-          this.closeSignInModal();
-          if (window.Utils) Utils.toast('Signed in with Google', 'success');
-          return;
-        } catch (e) {
-          if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
-          else console.error('[Firebase] Native Google sign-in failed', e);
-          return;
-        }
-      }
 
-      // Web / desktop (or native WebView without plugin): popup only. Never use redirect in Capacitor WebView.
-      const provider = new firebase.auth.GoogleAuthProvider();
+    initGoogleIdentity() {
+      const tryInit = () => {
+        if (this._gisInitialized) return true;
+        if (!(window.google && google.accounts && google.accounts.id)) return false;
+        try {
+          google.accounts.id.initialize({
+            client_id: this.googleClientId,
+            ux_mode: 'popup',
+            callback: (response) => this.handleGoogleCredentialResponse(response),
+            auto_select: false,
+            cancel_on_tap_outside: true
+          });
+          this._gisInitialized = true;
+          this.renderGoogleButton();
+          return true;
+        } catch (e) {
+          console.error('[Firebase] GIS init failed', e);
+          return false;
+        }
+      };
+      if (tryInit()) return;
+      let attempts = 0;
+      const timer = setInterval(() => {
+        attempts++;
+        if (tryInit() || attempts > 100) clearInterval(timer);
+      }, 100);
+      window.addEventListener('load', () => { tryInit(); this.renderGoogleButton(); }, { once: true });
+    },
+
+    renderGoogleButton() {
+      const container = document.getElementById('googleGisButtonContainer') || document.getElementById('signInModal');
+      if (!container || !(window.google && google.accounts && google.accounts.id)) return;
+      if (container.id === 'signInModal') {
+        // do not render into whole modal by mistake
+        const inner = document.getElementById('googleGisButtonContainer');
+        if (!inner) return;
+      }
+      const target = document.getElementById('googleGisButtonContainer');
+      if (!target) return;
       try {
-        await this.auth.signInWithPopup(provider);
+        const width = Math.max(240, Math.min((target.clientWidth || target.parentElement?.clientWidth || 320), 360));
+        target.innerHTML = '';
+        google.accounts.id.renderButton(target, {
+          type: 'standard',
+          theme: 'outline',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'rectangular',
+          width
+        });
+        this._gisRendered = true;
+      } catch (e) {
+        console.error('[Firebase] GIS render failed', e);
+      }
+    },
+
+    async handleGoogleCredentialResponse(response) {
+      try {
+        if (!response || !response.credential) throw new Error('No Google credential received');
+        if (!this.auth) throw new Error('Firebase Auth not ready');
+        const credential = firebase.auth.GoogleAuthProvider.credential(response.credential);
+        await this.auth.signInWithCredential(credential);
         this.closeSignInModal();
         if (window.Utils) Utils.toast('Signed in with Google', 'success');
       } catch (e) {
-        if (e && e.code === 'auth/popup-closed-by-user') return;
-        if (isNative) {
-          if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
-          return;
-        }
-        if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment' || e.code === 'auth/cancelled-popup-request')) {
-          try {
-            await this.auth.signInWithRedirect(provider);
-            return;
-          } catch (e2) {
-            if (window.Utils) Utils.toast('Google sign-in failed: ' + (e2 && e2.message ? e2.message : e2), 'error');
-            return;
-          }
-        }
+        console.error('[Firebase] GIS sign-in failed', e);
         if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+      }
+    },
+
+    async signInWithGoogle() {
+      // Google sign-in is provided by Google Identity Services button in the sign-in modal.
+      this.initGoogleIdentity();
+      this.renderGoogleButton();
+      if (!(window.google && google.accounts && google.accounts.id)) {
+        if (window.Utils) Utils.toast('Google Sign-In is loading. Please try again.', 'info');
       }
     },
     async signInWithEmail() {
