@@ -222,6 +222,257 @@
           }
         });
       }
+
+      // Header quick model switcher
+      this.bindHeaderModelSwitcher();
+    },
+
+    /* ---------- Header Model Quick Switch ---------- */
+    HEADER_PRESETS: {
+      'managed-qwen': { label: 'Managed Workers AI (Qwen 2.5 Coder 32B)', type: 'managed', model: '@cf/qwen/qwen2.5-coder-32b-instruct' },
+      'managed-llama': { label: 'Managed Workers AI (Llama 3.3 70B Fast)', type: 'managed', model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+      'local': { label: 'Local Server (localhost / Custom Tunnel)', type: 'local' }
+    },
+
+    normalizeLocalBaseUrl(url) {
+      let u = String(url || '').trim();
+      if (!u) return 'http://localhost:11434/v1';
+      u = u.replace(/\s+/g, '');
+      // keep trailing slash handling consistent for base building
+      return u.replace(/\/+$/, '');
+    },
+
+    getLocalModelsUrl() {
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      let base = this.normalizeLocalBaseUrl(s.localServerBaseUrl || 'http://localhost:11434/v1');
+      // common forms: http://host:11434/v1, http://host:11434, http://host:11434/v1/chat/completions
+      base = base.replace(/\/chat\/completions$/i, '');
+      if (/\/models$/i.test(base)) return base;
+      if (/\/v1$/i.test(base)) return base + '/models';
+      return base + '/v1/models';
+    },
+
+    inferHeaderPresetFromSettings() {
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const p = String(s.headerPreset || '').trim();
+      if (p && this.HEADER_PRESETS[p]) return p;
+      const mode = String(s.apiMode || 'managed').toLowerCase();
+      const model = String(s.agentModel || '').trim();
+      const endpoint = String(s.agentEndpoint || '').trim();
+      if (mode === 'managed' && !endpoint) {
+        if (model === '@cf/meta/llama-3.3-70b-instruct-fp8-fast') return 'managed-llama';
+        if (!model || model === '@cf/qwen/qwen2.5-coder-32b-instruct') return 'managed-qwen';
+        // custom managed model via settings -> default to qwen preset selection but don't force overwrite
+        return 'managed-qwen';
+      }
+      if (mode === 'direct' && String(s.directProvider || '').toLowerCase() === 'custom') return 'local';
+      return 'managed-qwen';
+    },
+
+    setHeaderStatus(state, title) {
+      const dot = document.getElementById('headerModelStatusDot');
+      if (!dot) return;
+      dot.classList.remove('ok', 'bad', 'checking', 'neutral');
+      dot.classList.add(state || 'neutral');
+      if (title) dot.setAttribute('title', title);
+    },
+
+    syncHeaderModelUI() {
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const preset = this.inferHeaderPresetFromSettings();
+      const presetSel = document.getElementById('headerModelPreset');
+      const localSel = document.getElementById('headerLocalModelSelect');
+      if (presetSel && presetSel.value !== preset) presetSel.value = preset;
+      if (localSel) {
+        const isLocal = preset === 'local';
+        localSel.classList.toggle('hidden', !isLocal);
+        const savedModel = String(s.localServerModel || s.agentModel || '').trim();
+        if (isLocal && savedModel) {
+          const has = [...localSel.options].some(o => o.value === savedModel);
+          if (!has) {
+            const opt = document.createElement('option');
+            opt.value = savedModel;
+            opt.textContent = savedModel;
+            localSel.appendChild(opt);
+          }
+          localSel.value = savedModel;
+        }
+      }
+    },
+
+    async applyHeaderPreset(presetId, opts = {}) {
+      const preset = this.HEADER_PRESETS[presetId] || this.HEADER_PRESETS['managed-qwen'];
+      const s = AppState.settings || (AppState.settings = {});
+      s.headerPreset = presetId;
+      if (preset.type === 'managed') {
+        s.apiMode = 'managed';
+        s.agentEndpoint = '';
+        s.agentProvider = 'openai-compatible';
+        s.agentModel = preset.model || '';
+      } else if (preset.type === 'local') {
+        s.apiMode = 'direct';
+        s.directProvider = 'custom';
+        s.agentProvider = 'openai-compatible';
+        s.localServerBaseUrl = this.normalizeLocalBaseUrl(s.localServerBaseUrl || 'http://localhost:11434/v1');
+        s.agentEndpoint = s.localServerBaseUrl;
+        // keep previously selected local model if any; if empty, leave blank until /v1/models loads
+        if (s.localServerModel) s.agentModel = s.localServerModel;
+      }
+      AppState.saveSettings();
+      this.restoreSettingsUI();
+      this.syncHeaderModelUI();
+      if (window.Agent) {
+        try { if (typeof Agent.persistAgentSettings === 'function') Agent.persistAgentSettings(); } catch {}
+        try { if (typeof Agent.updateKeyStatus === 'function') Agent.updateKeyStatus(); } catch {}
+      }
+      if (opts.check !== false) await this.refreshHeaderModelStatus({ reloadLocalModels: preset.type === 'local' });
+    },
+
+    async fetchLocalModels() {
+      const url = this.getLocalModelsUrl();
+      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      let models = [];
+      if (Array.isArray(data)) models = data;
+      else if (Array.isArray(data?.data)) models = data.data;
+      else if (Array.isArray(data?.models)) models = data.models;
+      else if (Array.isArray(data?.result?.data)) models = data.result.data;
+      const ids = [];
+      const seen = new Set();
+      for (const m of models) {
+        let id = '';
+        if (typeof m === 'string') id = m;
+        else if (m && typeof m === 'object') id = m.id || m.name || m.model || '';
+        id = String(id || '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+      }
+      return ids;
+    },
+
+    populateLocalModelSelect(models, opts = {}) {
+      const sel = document.getElementById('headerLocalModelSelect');
+      if (!sel) return;
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      const prev = String(s.localServerModel || s.agentModel || sel.value || '').trim();
+      sel.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = models && models.length ? 'Select local model…' : 'No local models found';
+      sel.appendChild(placeholder);
+      for (const id of (models || [])) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id;
+        sel.appendChild(opt);
+      }
+      const chosen = (models || []).includes(prev) ? prev : ((models || [])[0] || '');
+      if (chosen) sel.value = chosen;
+      if (opts.applySelection) {
+        if (chosen) {
+          s.localServerModel = chosen;
+          s.agentModel = chosen;
+          AppState.saveSettings();
+          const settingsModel = document.getElementById('agentModel'); if (settingsModel) settingsModel.value = chosen;
+          if (window.Agent && typeof Agent.persistAgentSettings === 'function') Agent.persistAgentSettings();
+        }
+      }
+    },
+
+    async refreshHeaderModelStatus(opts = {}) {
+      const preset = this.inferHeaderPresetFromSettings();
+      this.setHeaderStatus('checking', 'Checking connection…');
+      try {
+        if (preset === 'local') {
+          const url = this.getLocalModelsUrl();
+          let ok = false;
+          let models = [];
+          try {
+            models = await this.fetchLocalModels();
+            ok = true;
+          } catch (e) {
+            // fallback: at least check base endpoint reachability via OPTIONS/HEAD-like GET failure details
+            try {
+              const base = this.normalizeLocalBaseUrl((AppState.settings && AppState.settings.localServerBaseUrl) || 'http://localhost:11434/v1');
+              const ping = await fetch(base.replace(/\/chat\/completions$/i, ''), { method: 'GET', cache: 'no-store' });
+              ok = ping.ok || ping.status < 500;
+            } catch {}
+            if (!ok) throw e;
+          }
+          if (opts.reloadLocalModels !== false) this.populateLocalModelSelect(models, { applySelection: !String((AppState.settings && (AppState.settings.localServerModel || AppState.settings.agentModel)) || '').trim() || opts.forceSelectFirst });
+          this.syncHeaderModelUI();
+          this.setHeaderStatus(ok ? 'ok' : 'bad', ok ? `Local server reachable (${url})` : `Local server unreachable (${url})`);
+          return ok;
+        }
+
+        // Managed Workers AI presets route through /api/chat
+        let ok = false;
+        let title = 'Managed endpoint reachable (/api/chat)';
+        try {
+          const res = await fetch('/api/chat', { method: 'GET', cache: 'no-store' });
+          ok = res.ok;
+          if (!res.ok) title = `Managed endpoint responded with HTTP ${res.status} (/api/chat)`;
+        } catch (e) {
+          ok = false;
+          title = `Managed endpoint unreachable (/api/chat): ${String((e && e.message) || e || 'network error')}`;
+        }
+        this.setHeaderStatus(ok ? 'ok' : 'bad', title);
+        return ok;
+      } catch (e) {
+        const msg = String((e && e.message) || e || 'unreachable');
+        this.setHeaderStatus('bad', `Unreachable: ${msg}`);
+        return false;
+      }
+    },
+
+    bindHeaderModelSwitcher() {
+      const presetSel = document.getElementById('headerModelPreset');
+      const refreshBtn = document.getElementById('btnHeaderModelRefresh');
+      const localSel = document.getElementById('headerLocalModelSelect');
+      if (presetSel && !presetSel.dataset.boundPreset) {
+        presetSel.dataset.boundPreset = '1';
+        presetSel.addEventListener('change', async () => {
+          await this.applyHeaderPreset(presetSel.value || 'managed-qwen');
+        });
+      }
+      if (refreshBtn && !refreshBtn.dataset.boundRefresh) {
+        refreshBtn.dataset.boundRefresh = '1';
+        refreshBtn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          await this.refreshHeaderModelStatus({ reloadLocalModels: true });
+        });
+      }
+      if (localSel && !localSel.dataset.boundLocalModel) {
+        localSel.dataset.boundLocalModel = '1';
+        localSel.addEventListener('change', () => {
+          const val = String(localSel.value || '').trim();
+          const s = AppState.settings || (AppState.settings = {});
+          s.headerPreset = 'local';
+          s.apiMode = 'direct';
+          s.directProvider = 'custom';
+          s.agentProvider = 'openai-compatible';
+          s.localServerBaseUrl = this.normalizeLocalBaseUrl(s.localServerBaseUrl || 'http://localhost:11434/v1');
+          s.agentEndpoint = s.localServerBaseUrl;
+          s.localServerModel = val;
+          s.agentModel = val;
+          AppState.saveSettings();
+          this.restoreSettingsUI();
+          this.syncHeaderModelUI();
+          if (window.Agent) {
+            try { if (typeof Agent.persistAgentSettings === 'function') Agent.persistAgentSettings(); } catch {}
+            try { if (typeof Agent.updateKeyStatus === 'function') Agent.updateKeyStatus(); } catch {}
+          }
+          this.refreshHeaderModelStatus({ reloadLocalModels: false });
+        });
+      }
+
+      // Initial sync/check (non-blocking)
+      const initialPreset = this.inferHeaderPresetFromSettings();
+      if (AppState.settings) AppState.settings.headerPreset = initialPreset;
+      this.syncHeaderModelUI();
+      setTimeout(() => { this.refreshHeaderModelStatus({ reloadLocalModels: initialPreset === 'local' }); }, 0);
     },
 
     bindSettings() {
@@ -292,6 +543,17 @@
             if (!terminalUrl && typeof TerminalPanel.disconnect === 'function') TerminalPanel.disconnect(true);
           }
         }
+
+        // Sync header quick-switch preset/status with updated Settings values
+        try {
+          if (String(AppState.settings.apiMode || '') === 'direct' && String(AppState.settings.directProvider || '') === 'custom' && String(AppState.settings.agentEndpoint || '').trim()) {
+            AppState.settings.localServerBaseUrl = String(AppState.settings.agentEndpoint || '').trim();
+          }
+          AppState.settings.headerPreset = this.inferHeaderPresetFromSettings();
+          this.syncHeaderModelUI();
+          if (window.Agent && typeof Agent.updateKeyStatus === 'function') Agent.updateKeyStatus();
+          this.refreshHeaderModelStatus({ reloadLocalModels: AppState.settings.headerPreset === 'local' });
+        } catch {}
 
         this.closeSettings();
         if (window.Utils && Utils.toast) Utils.toast('Settings saved', 'success');

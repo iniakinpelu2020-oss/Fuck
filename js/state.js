@@ -33,7 +33,10 @@ Behavior:
     commandTimeoutSec: 600,
     webhookUrl: '',
     apiMode: 'managed',
-    directProvider: 'gemini'
+    directProvider: 'gemini',
+    headerPreset: '',
+    localServerBaseUrl: 'http://localhost:11434/v1',
+    localServerModel: ''
   };
 
   const State = {
@@ -58,6 +61,9 @@ Behavior:
       if (!this.settings.directProvider) this.settings.directProvider = defaultSettings.directProvider;
       if (this.settings.commandTimeoutSec == null) this.settings.commandTimeoutSec = defaultSettings.commandTimeoutSec;
       if (!String(this.settings.webhookUrl || '').trim()) this.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
+      if (!String(this.settings.localServerBaseUrl || '').trim()) this.settings.localServerBaseUrl = defaultSettings.localServerBaseUrl;
+      if (this.settings.localServerModel == null) this.settings.localServerModel = '';
+      if (this.settings.headerPreset == null) this.settings.headerPreset = '';
       if (!Array.isArray(this.vault)) this.vault = [];
       if (!Array.isArray(this.apiKeys)) this.apiKeys = [];
       if (!Array.isArray(this.mcpServers)) this.mcpServers = [];
