@@ -11,8 +11,7 @@
 
   const FB = {
     app: null, auth: null, db: null, user: null, ready: false,
-    googleClientId: '88418113812-2eatncg73fvuqa8nl7cirjre155kfprs.apps.googleusercontent.com',
-    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false, _gisInitialized: false, _gisRendered: false, _handlingOAuthRedirect: false,
+    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false,
 
     init() {
       try {
@@ -25,8 +24,6 @@
         this.ready = true;
         this.auth.onAuthStateChanged((user) => this.onAuthStateChanged(user));
         this.bindAuthUI();
-        // Same-window OAuth redirect result (id_token in URL hash) for WebView-safe Google sign-in
-        this.handleGoogleRedirectResult().catch(e => console.error('[Firebase] Google redirect handling failed', e));
       } catch (e) { console.error('[Firebase] init failed', e); }
     },
 
@@ -172,112 +169,29 @@
     openSignInModal() {
       const m = document.getElementById('signInModal');
       if (m) { m.classList.remove('hidden'); m.classList.add('flex'); }
-      this.initGoogleIdentity();
-      this.renderGoogleButton();
     },
     closeSignInModal() { const m = document.getElementById('signInModal'); if (m) { m.classList.add('hidden'); m.classList.remove('flex'); } },
     openAccountModal() { if (confirm('Sign out of ' + ((this.user && (this.user.email || this.user.displayName)) || 'account') + '?')) this.signOut(); },
 
-    initGoogleIdentity() {
-      // No-op: Google sign-in uses same-window OAuth implicit id_token redirect flow.
-    },
-
-    renderGoogleButton() {
-      // No-op: custom "Continue with Google" button triggers same-window OAuth flow.
-    },
-
-    async handleGoogleRedirectResult() {
-      try {
-        const hash = String(window.location.hash || '').replace(/^#/, '');
-        if (!hash) return false;
-        const params = new URLSearchParams(hash);
-        const idToken = params.get('id_token');
-        if (!idToken) return false;
-
-        const error = params.get('error');
-        const errorDesc = params.get('error_description') || params.get('error_subtype') || '';
-
-        // Clean URL hash immediately (avoid re-processing on refresh)
-        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch {}
-
-        const savedNonce = sessionStorage.getItem('apex_google_oauth_nonce');
-        try { sessionStorage.removeItem('apex_google_oauth_nonce'); } catch {}
-
-        if (error) throw new Error(decodeURIComponent(String(errorDesc || error)));
-
-        const payload = this.decodeJwtPayload(idToken);
-        if (savedNonce && payload && payload.nonce && payload.nonce !== savedNonce) {
-          throw new Error('Google sign-in nonce mismatch. Please try again.');
-        }
-
-        if (!this.auth) {
-          // Wait briefly for Firebase Auth init if redirect returns early
-          for (let i = 0; i < 40 && !this.auth; i++) await new Promise(r => setTimeout(r, 50));
-        }
-        if (!this.auth) throw new Error('Firebase Auth not ready');
-
-        this._handlingOAuthRedirect = true;
-        const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
-        await this.auth.signInWithCredential(credential);
-        this.closeSignInModal();
-        if (window.Utils) Utils.toast('Signed in with Google', 'success');
-        return true;
-      } catch (e) {
-        console.error('[Firebase] Google redirect sign-in failed', e);
-        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
-        return false;
-      } finally {
-        this._handlingOAuthRedirect = false;
-      }
-    },
-
-    decodeJwtPayload(token) {
-      try {
-        const part = String(token || '').split('.')[1];
-        if (!part) return null;
-        const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-        const pad = '='.repeat((4 - (b64.length % 4)) % 4);
-        const json = decodeURIComponent(atob(b64 + pad).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-        return JSON.parse(json);
-      } catch { return null; }
-    },
-
-    async handleGoogleCredentialResponse(response) {
-      // Legacy GIS callback support (not used by same-window redirect flow)
-      try {
-        if (!response || !response.credential) throw new Error('No Google credential received');
-        if (!this.auth) throw new Error('Firebase Auth not ready');
-        const credential = firebase.auth.GoogleAuthProvider.credential(response.credential);
-        await this.auth.signInWithCredential(credential);
-        this.closeSignInModal();
-        if (window.Utils) Utils.toast('Signed in with Google', 'success');
-      } catch (e) {
-        console.error('[Firebase] GIS sign-in failed', e);
-        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
-      }
-    },
-
     async signInWithGoogle() {
-      if (this._handlingOAuthRedirect) return;
-      // Same-window OAuth 2.0 implicit id_token flow (WebView-safe: no external Chrome popup / gsi transform window)
+      if (!this.auth) return;
+      const provider = new firebase.auth.GoogleAuthProvider();
       try {
-        const nonceBytes = new Uint8Array(16);
-        if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(nonceBytes);
-        else for (let i = 0; i < nonceBytes.length; i++) nonceBytes[i] = Math.floor(Math.random() * 256);
-        const nonce = Array.from(nonceBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        try { sessionStorage.setItem('apex_google_oauth_nonce', nonce); } catch {}
-        const params = new URLSearchParams({
-          client_id: this.googleClientId,
-          redirect_uri: 'https://apexaicoder.pages.dev',
-          response_type: 'id_token',
-          scope: 'openid email profile',
-          nonce,
-          prompt: 'select_account'
-        });
-        window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+        await this.auth.signInWithPopup(provider);
+        this.closeSignInModal();
+        if (window.Utils) Utils.toast('Signed in with Google', 'success');
       } catch (e) {
-        console.error('[Firebase] Google OAuth redirect start failed', e);
-        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+        if (e && e.code === 'auth/popup-closed-by-user') return;
+        const blocked = e && (
+          e.code === 'auth/popup-blocked' ||
+          e.code === 'auth/operation-not-supported-in-this-environment' ||
+          e.code === 'auth/cancelled-popup-request'
+        );
+        if (blocked) {
+          if (window.Utils) Utils.toast('In-app browser blocked Google popup — please sign in with Email & Password below (syncs the same cloud account).', 'error');
+        } else {
+          if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+        }
       }
     },
     async signInWithEmail() {
