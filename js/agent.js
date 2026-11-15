@@ -663,6 +663,14 @@
       } catch (e) { /* persistence should not break chat */ }
     },
 
+    renderBadges(badges) {
+      try {
+        const arr = Array.isArray(badges) ? badges.filter(Boolean) : [];
+        if (!arr.length) return '';
+        return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(String(b ?? ''))}</span>`).join('')}</div>`;
+      } catch { return ''; }
+    },
+
     addMessage(role, content, meta = '', badges = [], opts = {}) {
       if (role !== 'assistant' || !opts.welcomePlaceholder) this.ensureActiveChatSession();
       const wrap = document.getElementById('chatMessages');
@@ -692,7 +700,7 @@
         console.error('[Agent.addMessage] render error', e);
         bodyHtml = `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
       }
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${bodyHtml}${this.renderBadges(badges)}`;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${bodyHtml}${(typeof this.renderBadges === 'function') ? this.renderBadges(badges) : ''}`;
       wrap.appendChild(div);
       try {
         if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
@@ -777,7 +785,7 @@
             contentEl.innerHTML = `<pre class="chat-content">${Agent.escapeHtml(full)}</pre>`;
           }
           const badgeArr = Array.isArray(badges) ? badges : [];
-          if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badgeArr);
+          if (badgesEl) badgesEl.innerHTML = (typeof Agent.renderBadges === 'function') ? Agent.renderBadges(badgeArr) : '';
           div.classList.remove('streaming');
           try { Agent.attachMessageActions(div, full); } catch (e) { console.error('[Agent.stream] attach actions failed', e); }
           wrap.scrollTop = wrap.scrollHeight;
@@ -1282,6 +1290,78 @@
       return JSON.stringify(data, null, 2);
     },
 
+  makeChatTitleFromPrompt(prompt, maxLen = 36) {
+      try {
+        let s = String(prompt == null ? '' : prompt).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!s) return 'New chat';
+        s = s.replace(/^(please|can you|could you|would you|hey|hi|hello|help me|i need you to|i want you to)\b[:,\s-]*/i, '').trim() || s;
+        if (s.length > maxLen) s = s.slice(0, Math.max(1, maxLen - 1)).trimEnd() + '…';
+        return s || 'New chat';
+      } catch { return 'New chat'; }
+    },
+
+    async autoTitleChatSession(chatId, prompt) {
+      try {
+        if (!chatId || !window.AppState || typeof AppState.getChat !== 'function') return;
+        const session = AppState.getChat(chatId);
+        if (!session || String(session.title || '') !== 'New chat') return;
+
+        const fallback = this.makeChatTitleFromPrompt(prompt, 36);
+        if (typeof AppState.updateChat === 'function') {
+          AppState.updateChat(chatId, { title: fallback });
+        } else {
+          session.title = fallback;
+          session.updatedAt = Date.now();
+          if (typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions();
+        }
+        if (window.App && typeof App.renderChatHistory === 'function') App.renderChatHistory();
+
+        const userPrompt = String(prompt == null ? '' : prompt).trim();
+        if (!userPrompt) return;
+
+        let resp = null;
+        try {
+          resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: '@cf/qwen/qwen2.5-coder-32b-instruct',
+              stream: false,
+              max_tokens: 20,
+              temperature: 0.2,
+              messages: [
+                { role: 'system', content: 'You generate short chat titles. Return only the title text.' },
+                { role: 'user', content: "Summarize the user's message into a concise 3-5 word chat title. No quotes, no punctuation, plain words only.\n\nMessage: " + userPrompt.slice(0, 500) }
+              ]
+            })
+          });
+        } catch { return; }
+        if (!resp || !resp.ok) return;
+        const ct = String(resp.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('text/event-stream')) return;
+        const data = await resp.json().catch(() => null);
+        let title = (typeof this.extractAssistantText === 'function') ? this.extractAssistantText('openai-compatible', data) : '';
+        if (!title && data && Array.isArray(data.choices)) title = (((data.choices[0] || {}).message || {}).content || '');
+        title = String(title || '').split('\n')[0].replace(/["'`\u201c\u201d\u2018\u2019]/g, '').replace(/[.!?:;,]+$/g, '').replace(/\s+/g, ' ').trim();
+        if (!title) return;
+        const words = title.split(/\s+/).filter(Boolean).slice(0, 6);
+        if (words.length) title = words.join(' ');
+        if (!title || /^new chat$/i.test(title)) return;
+
+        const current = AppState.getChat(chatId);
+        if (!current) return;
+        const curTitle = String(current.title || '');
+        if (curTitle !== fallback && curTitle !== 'New chat') return;
+        if (typeof AppState.updateChat === 'function') {
+          AppState.updateChat(chatId, { title });
+        } else {
+          current.title = title;
+          current.updatedAt = Date.now();
+          if (typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions();
+        }
+        if (window.App && typeof App.renderChatHistory === 'function') App.renderChatHistory();
+      } catch { /* non-fatal */ }
+    },
     async callWithRotation(promptText, opts = {}) {
       return this.callLLM(promptText, opts);
     },
