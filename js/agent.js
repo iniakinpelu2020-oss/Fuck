@@ -1991,13 +1991,13 @@
         '- `inspect-pcap-capture <pcap>`: inspect network captures\n' +
         '- `search <target> <pattern/options>`: search within artifact\n' +
         '- `trace <target> [options]`: trace behavior/flow where supported\n\n' +
-        'After running the initial `rea` inspection, summarize findings and present actionable **Suggested Next Probes** tailored to the target type (and execute the next logical `rea` probe if asked):\n' +
+        'After running the initial `rea` inspection, summarize findings—strictly keeping **Confirmed Facts**, **Inferences**, and **Unknowns** separate—and present actionable **Suggested Next Probes** tailored to the target type (and execute the next logical `rea` probe if asked):\n' +
         '1. Trace relevant capability strings/import hints to suspected feature areas (network, filesystem, crypto, process, persistence) and record offset/section evidence where available.\n' +
         '2. If PE: inspect entry point, imports/exports, resources, overlay, and high-entropy/large sections for embedded payloads or installers.\n' +
         '3. If archive/APK: review manifests, scripts, native libraries (.so), DEX/classes, and config files for permissions/endpoints/entry points.\n' +
         '4. Search extracted strings for URLs, domains, registry keys, file paths, command lines, and error messages tied to behavior of interest.\n' +
         '5. For deeper reverse engineering, analyze in authorized environments with native RE tools (Ghidra/IDA/Hopper/rizin) and, if needed, controlled dynamic instrumentation.\n' +
-        '6. Validate hypotheses against additional static/dynamic evidence.';
+        '6. Validate hypotheses against additional static/dynamic evidence; keep confirmed facts, inferences, and unknowns separate.';
     },
     shouldRouteToTerminalExecution(prompt) {
       const text = String(prompt || '').trim();
