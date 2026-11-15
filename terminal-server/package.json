@@ -1,0 +1,19 @@
+{
+  "name": "apex-terminal-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HTTP + WebSocket remote terminal/runner for Apex Studio (Render-ready)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

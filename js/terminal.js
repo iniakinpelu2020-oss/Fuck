@@ -155,6 +155,39 @@
       return this.isHttpRunnerUrl(url) ? url : '';
     },
 
+    getRunnerToken(url) {
+      const s = (window.AppState && AppState.settings) ? AppState.settings : {};
+      let token = String(s.runnerToken || s.codespaceToken || s.terminalToken || '').trim();
+      if (!token) {
+        const raw = String(url != null ? url : this.getConfiguredUrl() || '').trim();
+        try {
+          const u = new URL(raw);
+          token = String(u.searchParams.get('token') || u.searchParams.get('access_token') || u.searchParams.get('t') || '').trim();
+        } catch {}
+      }
+      return token;
+    },
+
+    buildDirectHttpExecTargets(runnerUrl) {
+      const raw = String(runnerUrl || '').trim();
+      let u;
+      try { u = new URL(raw); } catch { return []; }
+      let path = (u.pathname || '/').replace(/\/+$/, '') || '/';
+      const basePath = path === '/' ? '' : path;
+      const qs = u.search || '';
+      const targets = [];
+      const push = (full) => { if (full && !targets.includes(full)) targets.push(full); };
+      if (/\/(exec|run)$/i.test(path)) {
+        push(u.origin + path + qs);
+        if (/\/exec$/i.test(path)) push(u.origin + path.replace(/\/exec$/i, '/run') + qs);
+        else push(u.origin + path.replace(/\/run$/i, '/exec') + qs);
+      } else {
+        push(u.origin + basePath + '/exec' + qs);
+        push(u.origin + basePath + '/run' + qs);
+      }
+      return targets;
+    },
+
     persistUrl(url) {
       const v = String(url || '').trim();
       if (window.AppState && AppState.settings) {
@@ -701,21 +734,17 @@
       const timeoutMs = this.getConfiguredCommandTimeoutMs(opts);
       const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
       const timer = controller ? setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs) : null;
-      try {
-        // Proxy via Cloudflare Worker/Pages Function to avoid browser CORS/preflight and Authorization header restrictions
-        const token = (window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '';
-        const res = await fetch('/api/exec', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            runnerUrl,
-            command: String(command || ''),
-            token: String(token || ''),
-            timeoutMs,
-            ...(opts.cwd ? { cwd: String(opts.cwd) } : {})
-          }),
-          signal: controller ? controller.signal : undefined
-        });
+      const token = (typeof this.getRunnerToken === 'function')
+        ? this.getRunnerToken(runnerUrl)
+        : String(((window.AppState && AppState.settings && (AppState.settings.runnerToken || AppState.settings.codespaceToken || AppState.settings.terminalToken)) || '')).trim();
+      const bodyObj = {
+        command: String(command || ''),
+        timeoutMs,
+        ...(opts.cwd ? { cwd: String(opts.cwd) } : {}),
+        ...(token ? { token: String(token) } : {})
+      };
+
+      const parseExecResponse = async (res, targetLabel) => {
         const ct = (res.headers.get('content-type') || '').toLowerCase();
         let data = null;
         let text = '';
@@ -745,12 +774,59 @@
 
         if (!res.ok) {
           const errMsg = stderr || (data && data.message ? String(data.message) : `HTTP ${res.status}`);
-          return { ok: false, stdout, stderr: errMsg, output: output || errMsg, mode: 'remote-http', code: (exitCode != null ? exitCode : res.status), status: res.status, data, runnerUrl, timeoutMs };
+          return { ok: false, stdout, stderr: errMsg, output: output || errMsg, mode: 'remote-http', code: (exitCode != null ? exitCode : res.status), status: res.status, data, runnerUrl, timeoutMs, endpoint: targetLabel };
         }
 
         const code = exitCode != null ? exitCode : 0;
         const ok = code === 0 && !(data && data.ok === false);
-        return { ok, stdout, stderr, output, mode: 'remote-http', code, status: res.status, data, runnerUrl, timeoutMs };
+        return { ok, stdout, stderr, output, mode: 'remote-http', code, status: res.status, data, runnerUrl, timeoutMs, endpoint: targetLabel };
+      };
+
+      try {
+        // Prefer direct HTTP call to configured runner (works cleanly with Render https://...onrender.com URLs, including ?token=... or bearer)
+        const directTargets = (typeof this.buildDirectHttpExecTargets === 'function') ? this.buildDirectHttpExecTargets(runnerUrl) : [];
+        let directNetworkError = null;
+        for (let i = 0; i < directTargets.length; i++) {
+          const target = directTargets[i];
+          try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers.Authorization = `Bearer ${token}`;
+            const res = await fetch(target, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(bodyObj),
+              signal: controller ? controller.signal : undefined
+            });
+            // If endpoint path not found, try alternate (/exec <-> /run)
+            if (res.status === 404 && i < directTargets.length - 1) continue;
+            return await parseExecResponse(res, target);
+          } catch (e) {
+            if (e && e.name === 'AbortError') throw e;
+            directNetworkError = e;
+          }
+        }
+
+        // Fallback: proxy via Cloudflare Worker/Pages Function to avoid browser CORS/preflight and Authorization header restrictions
+        try {
+          const res = await fetch('/api/exec', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              runnerUrl,
+              command: String(command || ''),
+              token: String(token || ''),
+              timeoutMs,
+              ...(opts.cwd ? { cwd: String(opts.cwd) } : {})
+            }),
+            signal: controller ? controller.signal : undefined
+          });
+          return await parseExecResponse(res, '/api/exec');
+        } catch (proxyErr) {
+          if (proxyErr && proxyErr.name === 'AbortError') throw proxyErr;
+          const e = directNetworkError || proxyErr;
+          const msg = (e && e.message) ? e.message : String(e);
+          return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 1, error: msg, runnerUrl, timeoutMs };
+        }
       } catch (e) {
         const msg = (e && e.name === 'AbortError') ? `Remote runner request timed out after ${Math.round(timeoutMs/1000)}s` : (e && e.message ? e.message : String(e));
         return { ok: false, stdout: '', stderr: msg, output: msg, mode: 'remote-http', code: 124, error: msg, runnerUrl, timeoutMs, timedOut: (e && e.name === 'AbortError') || undefined };
