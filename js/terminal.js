@@ -115,22 +115,38 @@
     setStatus(s) {
       this.connected = s === 'connected';
       const el = document.getElementById('terminalStatus');
-      if (!el) return;
+      const header = document.getElementById('headerRunnerStatus');
+      if (!el && !header) return;
       let label = 'Browser Sandbox';
-      let cls = 'badge text-cyan-300 ';
+      let cls = 'badge badge-success text-cyan-300 ';
+      let headerLabel = 'Runner: Browser';
+      let headerTitle = 'Runner: Browser Sandbox';
       if (s === 'connected') {
         label = 'Remote Shell Connected';
         cls = 'badge badge-success text-green-400 ';
+        headerLabel = 'Runner: Remote';
+        headerTitle = 'Connected to remote WebSocket shell bridge';
       } else if (s === 'connecting') {
         label = 'Connecting Remote...';
         cls = 'badge badge-warn text-yellow-400 ';
+        headerLabel = 'Runner: Connecting';
+        headerTitle = 'Connecting to remote shell bridge';
       } else {
         label = 'Browser Sandbox';
         cls = 'badge badge-success text-cyan-300 ';
+        headerLabel = 'Runner: Browser';
+        headerTitle = 'Runner: Browser Sandbox';
       }
-      el.textContent = label;
-      el.className = cls;
-      el.title = s === 'connected' ? 'Connected to remote WebSocket shell bridge' : (s === 'connecting' ? 'Connecting to remote shell bridge' : 'In-browser execution engine active');
+      if (el) {
+        el.textContent = label;
+        el.className = cls;
+        el.title = s === 'connected' ? 'Connected to remote WebSocket shell bridge' : (s === 'connecting' ? 'Connecting to remote shell bridge' : 'In-browser execution engine active');
+      }
+      if (header) {
+        header.textContent = headerLabel;
+        header.className = cls + ' !text-[10px] !px-2 !py-0.5 whitespace-nowrap';
+        header.title = headerTitle;
+      }
     },
 
     isHttpRunnerUrl(url) {
@@ -235,10 +251,16 @@
         this.disconnect(true);
         this.remoteUrl = configured;
         const el = document.getElementById('terminalStatus');
+        const header = document.getElementById('headerRunnerStatus');
         if (el) {
           el.textContent = 'Remote Runner (HTTP)';
           el.className = 'badge badge-success text-green-400 ';
           el.title = `Remote HTTP runner configured: ${configured}`;
+        }
+        if (header) {
+          header.textContent = 'Runner: HTTP';
+          header.className = 'badge badge-success text-green-400 !text-[10px] !px-2 !py-0.5 whitespace-nowrap';
+          header.title = `Remote HTTP runner configured: ${configured}`;
         }
         this.connected = false;
         this.write(`\x1b[32mRemote Runner configured (HTTP): ${configured}\x1b[0m`);
