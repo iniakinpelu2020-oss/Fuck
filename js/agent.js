@@ -617,9 +617,23 @@
       return /^Hi — I'm Apex\b/.test(c) && c.includes('your autonomous agent');
     },
 
+    ensureActiveChatSession() {
+      try {
+        if (!window.AppState) return null;
+        if (!Array.isArray(AppState.chatSessions)) AppState.chatSessions = [];
+        let session = (AppState.activeChatId && AppState.getChat) ? AppState.getChat(AppState.activeChatId) : null;
+        if (!session) {
+          session = (typeof AppState.createChat === 'function') ? AppState.createChat('New chat') : null;
+          if (session && typeof AppState.saveActiveChatId === 'function') AppState.saveActiveChatId(session.id);
+        }
+        return session || null;
+      } catch { return null; }
+    },
+
     persistMessage(role, content, meta = '', badges = []) {
       if (this.isWelcomeMessage(role, content)) return;
       try {
+        this.ensureActiveChatSession();
         const id = AppState && AppState.activeChatId;
         if (!id || !AppState.chatSessions) return;
         const s = AppState.getChat(id);
@@ -633,6 +647,7 @@
     },
 
     addMessage(role, content, meta = '', badges = [], opts = {}) {
+      if (role !== 'assistant' || !opts.welcomePlaceholder) this.ensureActiveChatSession();
       const wrap = document.getElementById('chatMessages');
       if (!wrap) return null;
 

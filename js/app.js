@@ -835,6 +835,7 @@
       const session = AppState.createChat('New chat');
       AppState.saveActiveChatId(session.id);
       this.renderChatHistory();
+      this.setView('agent');
       this.loadActiveChat();
       Utils.toast('New chat', 'info');
     },
@@ -843,6 +844,7 @@
       const session = AppState.getChat(id);
       if (!session) return;
       AppState.saveActiveChatId(id);
+      this.setView('agent');
       this.renderChatHistory();
       this.loadActiveChat();
     },
@@ -852,14 +854,15 @@
       if (!wrap) return;
       wrap.innerHTML = '';
 
-      // Ensure there is always an active session
-      if (!AppState.activeChatId || !AppState.getChat(AppState.activeChatId)) {
+      // Ensure there is always an active session bound to the current view
+      let session = (AppState.activeChatId && AppState.getChat(AppState.activeChatId)) ? AppState.getChat(AppState.activeChatId) : null;
+      if (!session) {
         const s = AppState.createChat('New chat');
         AppState.saveActiveChatId(s.id);
+        session = s;
       }
-
-      const session = AppState.getChat(AppState.activeChatId);
-      if (!session) return;
+      // Keep activeChatId consistent with rendered session
+      if (AppState.activeChatId !== session.id) AppState.saveActiveChatId(session.id);
 
       // Strip/filter any previously saved welcome messages from old sessions (never persist greeting)
       const isWelcome = (m) => m && m.role === 'assistant' && /^Hi — I'm Apex\b/.test(String(m.content || '')) && String(m.content || '').includes('your autonomous agent');
@@ -885,6 +888,8 @@
         Agent.addMessage(role, m.content, m.meta || '', m.badges || [], { persist: false, keepWelcomePlaceholder: true });
       });
 
+      // Ensure latest message is visible
+      try { wrap.scrollTop = wrap.scrollHeight; } catch {}
       this.renderChatHistory();
     },
 
