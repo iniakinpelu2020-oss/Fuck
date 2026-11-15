@@ -1202,6 +1202,75 @@
       return specs;
     },
 
+    formatMcpToolCatalogCompact(tools) {
+      try {
+        const list = Array.isArray(tools) ? tools : [];
+        const lines = [];
+        for (const t of list) {
+          try {
+            const server = String((t && t.server) || '').trim();
+            const name = String((t && (t.name || t.id)) || '').trim();
+            if (!server || !name) continue;
+            const fullName = `mcp__${server}__${name}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+            let params = [];
+            const schema = (t && (t.inputSchema || t.parameters || t.input_schema || t.schema)) || null;
+            if (schema && typeof schema === 'object') {
+              if (Array.isArray(schema.required) && schema.required.length) params = schema.required.map(x => String(x));
+              else if (schema.properties && typeof schema.properties === 'object') params = Object.keys(schema.properties);
+            }
+            params = params.filter(Boolean).slice(0, 6).map(p => String(p).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24) || 'arg');
+            const paramStr = params.join(', ');
+            let desc = String((t && (t.description || t.summary || '')) || '').replace(/\s+/g, ' ').trim();
+            if (desc) {
+              const m = desc.match(/^(.+?[.!?])(\s|$)/);
+              desc = (m ? m[1] : desc).slice(0, 120).trim();
+            }
+            const line = desc ? `- ${fullName}(${paramStr}): ${desc}` : `- ${fullName}(${paramStr})`;
+            lines.push(line);
+          } catch {}
+        }
+        let out = lines.join('\n');
+        if (out.length > 7000) out = out.slice(0, 7000) + '\n- ... (catalog truncated)';
+        return out || '- (no MCP tools)';
+      } catch { return '- (MCP catalog unavailable)'; }
+    },
+
+    estimateTokensFromPayload(payload) {
+      try {
+        const str = typeof payload === 'string' ? payload : JSON.stringify(payload || '');
+        return Math.ceil(str.length / 3.5);
+      } catch { return 0; }
+    },
+
+    trimMessagesToTokenBudget(messages, maxInputTokens = 24000) {
+      try {
+        if (!Array.isArray(messages) || messages.length <= 2) return Array.isArray(messages) ? messages : [];
+        let msgs = messages.map(m => (m && typeof m === 'object') ? { ...m } : m);
+        const est = () => this.estimateTokensFromPayload(msgs);
+        let guard = 0;
+        while (est() > maxInputTokens && msgs.length > 2 && guard++ < 200) {
+          let removed = false;
+          for (let i = 0; i < msgs.length - 1; i++) {
+            const role = msgs[i] && msgs[i].role;
+            if (role !== 'system') {
+              const tcIds = new Set();
+              if (role === 'assistant' && Array.isArray(msgs[i].tool_calls)) {
+                for (const tc of msgs[i].tool_calls) { if (tc && tc.id) tcIds.add(tc.id); }
+              }
+              msgs.splice(i, 1);
+              if (tcIds.size) {
+                while (i < msgs.length && msgs[i] && msgs[i].role === 'tool' && tcIds.has(msgs[i].tool_call_id)) msgs.splice(i, 1);
+              }
+              removed = true;
+              break;
+            }
+          }
+          if (!removed) break;
+        }
+        return msgs;
+      } catch { return Array.isArray(messages) ? messages : []; }
+    },
+
     getBuiltinToolSpecs() {
       // Expose remote/local shell as a callable tool so LLM can request execution via tool_calls
       return [{
@@ -1286,26 +1355,33 @@
 
     buildRequestBody(provider, model, system, userContentOrMessages, opts = {}) {
       // Accepts a plain prompt string (legacy) or a full messages array (native tool loop)
+      const configuredMax = Number(opts.max_tokens || opts.maxTokens || (AppState && AppState.settings && (AppState.settings.maxTokens || AppState.settings.max_tokens)) || 4096) || 4096;
       if (provider === 'anthropic') {
         const content = Array.isArray(userContentOrMessages)
           ? String((userContentOrMessages[userContentOrMessages.length - 1] || {}).content || '')
           : String(userContentOrMessages || '');
-        const body = { max_tokens: 4096, system, messages: [{ role: 'user', content }] };
+        const msgs = [{ role: 'user', content }];
+        const estIn = (typeof this.estimateTokensFromPayload === 'function') ? this.estimateTokensFromPayload({ system, messages: msgs, model: model || 'claude-3-5-sonnet-latest' }) : 0;
+        const clamped = Math.min(configuredMax, Math.max(1024, 31500 - estIn));
+        const body = { max_tokens: clamped, system, messages: msgs };
         body.model = model || 'claude-3-5-sonnet-latest';
         return body; // Anthropic streaming/tool protocol differs; keep simple for compatibility
       }
-      const messages = Array.isArray(userContentOrMessages)
+      let messages = Array.isArray(userContentOrMessages)
         ? userContentOrMessages
         : [
             { role: 'system', content: String(system || '') },
             { role: 'user', content: String(userContentOrMessages || '') }
           ];
-      const body = { temperature: 0.2, messages };
+      if (typeof this.trimMessagesToTokenBudget === 'function') messages = this.trimMessagesToTokenBudget(messages, 24000);
+      const toolsForBody = (Array.isArray(opts.tools) && opts.tools.length) ? opts.tools.map(t => ({ type: t.type || 'function', function: t.function })) : null;
+      const estIn = (typeof this.estimateTokensFromPayload === 'function') ? this.estimateTokensFromPayload({ model: model || '', messages, tools: toolsForBody }) : 0;
+      const clampedMax = Math.min(configuredMax, Math.max(1024, 31500 - estIn));
+      const body = { temperature: 0.2, messages, max_tokens: clampedMax };
       if (model) body.model = model; // omit when empty so /api/chat can apply server default
       if (opts.stream) body.stream = true;
-      if (Array.isArray(opts.tools) && opts.tools.length) {
-        // strip internal metadata before sending
-        body.tools = opts.tools.map(t => ({ type: t.type || 'function', function: t.function }));
+      if (toolsForBody) {
+        body.tools = toolsForBody;
         if (opts.tool_choice) body.tool_choice = opts.tool_choice;
       }
       return body;
@@ -1816,10 +1892,14 @@
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
       const llmTools = (typeof this.getLlmTools === 'function') ? this.getLlmTools() : [];
       if (mcpTools.length) {
-        contextBlock += `\n\n--- Available MCP Tools ---\n` + mcpTools.map(t => `- ${t.server}:${t.name || t.id} (function tool name: mcp__${t.server}__${t.name || t.id})${t.description ? ' - ' + t.description : ''}`).join('\n');
+        const compactCatalog = (typeof this.formatMcpToolCatalogCompact === 'function')
+          ? this.formatMcpToolCatalogCompact(mcpTools)
+          : mcpTools.map(t => `- mcp__${t.server}__${t.name || t.id}`).join('\n');
+        contextBlock += `\n\n--- Available MCP Tools (${mcpTools.length}) ---\n` + compactCatalog;
       }
       if (llmTools.length) {
-        contextBlock += `\n\n--- Available Function Tools (LLM schema) ---\n` + llmTools.map(t => `- ${(t.function && t.function.name) || t.name || '(unnamed)'}`).join('\n');
+        const toolNames = llmTools.map(t => `- ${(t.function && t.function.name) || t.name || '(unnamed)'}`).join('\n');
+        contextBlock += `\n\n--- Available Function Tools (${llmTools.length}) ---\n` + toolNames;
       }
 
       // RAG: auto-retrieved snippets
