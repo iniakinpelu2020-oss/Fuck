@@ -17,8 +17,31 @@
       if (window.Workspace && Workspace.init) Workspace.init();
       Agent.init();
 
-      // Chat history
+      // Chat history: always start a fresh page load on a new blank chat unless URL specifies one
       this.bindChatHistory();
+      this.renderChatHistory();
+      const requestedChatId = (() => {
+        try {
+          const url = new URL(window.location.href);
+          const q = (url.searchParams.get('chat') || url.searchParams.get('chatId') || '').trim();
+          if (q) return q;
+          const hash = String(url.hash || '').replace(/^#/, '').trim();
+          if (!hash) return '';
+          const hp = new URLSearchParams(hash);
+          const hq = (hp.get('chat') || hp.get('chatId') || '').trim();
+          if (hq) return hq;
+          // also accept direct hash id form like #chat_<id>
+          if (/^chat_[a-z0-9_]+$/i.test(hash)) return hash;
+          return '';
+        } catch { return ''; }
+      })();
+      if (requestedChatId && AppState.getChat(requestedChatId)) {
+        AppState.saveActiveChatId(requestedChatId);
+      } else {
+        // Fresh load/new tab: initialize a brand-new empty chat session (keep history intact)
+        const fresh = AppState.createChat('New chat');
+        AppState.saveActiveChatId(fresh.id);
+      }
       this.renderChatHistory();
       this.loadActiveChat();
 
