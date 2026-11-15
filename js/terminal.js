@@ -12,9 +12,61 @@
     _manualDisconnect: false,
     _maxReconnectDelay: 15000,
 
+    fallback: null,
+    _nativeLine: '',
+
+    initFallbackTerminal(container) {
+      if (!container) return;
+      this.term = null;
+      this.fit = null;
+      container.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'flex flex-col h-full min-h-0 bg-[#05070b]';
+      const out = document.createElement('pre');
+      out.className = 'flex-1 min-h-0 overflow-auto custom-scroll p-2 m-0 text-[13px] leading-5 text-slate-200 font-mono whitespace-pre-wrap break-words';
+      out.style.background = '#05070b';
+      const row = document.createElement('form');
+      row.className = 'flex items-center gap-2 border-t border-border px-2 py-1.5 bg-[#05070b] shrink-0';
+      row.setAttribute('autocomplete', 'off');
+      const prompt = document.createElement('span');
+      prompt.className = 'text-accent2 text-xs font-mono shrink-0';
+      prompt.textContent = '$';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'flex-1 min-w-0 bg-transparent text-slate-200 text-[13px] font-mono outline-none border-0 p-0';
+      input.placeholder = 'Type a command and press Enter';
+      input.setAttribute('aria-label', 'Terminal command');
+      row.append(prompt, input);
+      wrap.append(out, row);
+      container.appendChild(wrap);
+      this.fallback = { container, output: out, input, form: row, prompt, line: '' };
+      this._nativeLine = '';
+      row.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cmd = String(input.value || '').trim();
+        if (!cmd) return;
+        input.value = '';
+        this._nativeLine = '';
+        await this.executeCommand(cmd);
+      });
+      input.addEventListener('keydown', (e) => {
+        // Basic Ctrl+C affordance
+        if (e.ctrlKey && e.key === 'c') {
+          e.preventDefault();
+          this.writeRaw('^C\n');
+          input.value = '';
+          this._nativeLine = '';
+        }
+      });
+      this.write('Apex Runner — browser sandbox ready (native terminal fallback).');
+      this.write('File commands and JS run locally. Configure a remote WebSocket bridge in Settings for a live shell.');
+      input.focus();
+    },
+
     init() {
       const container = document.getElementById('xtermContainer');
       if (window.Terminal && container) {
+        this.fallback = null;
         this.term = new window.Terminal({
           convertEol: true,
           cursorBlink: true,
@@ -32,13 +84,16 @@
         this.term.onData(data => this.sendInteractive(data));
         window.addEventListener('resize', () => this.fit && this.fit.fit());
       } else if (container) {
-        container.innerHTML = '<div class="p-2 text-xs text-red-300">xterm.js failed to load.</div>';
+        this.initFallbackTerminal(container);
       }
 
       const btnConn = document.getElementById('btnTerminalConnect');
       const btnClear = document.getElementById('btnTerminalClear');
       if (btnConn) btnConn.addEventListener('click', () => this.connect());
-      if (btnClear) btnClear.addEventListener('click', () => this.term && this.term.clear());
+      if (btnClear) btnClear.addEventListener('click', () => {
+        if (this.term) this.term.clear();
+        else if (this.fallback && this.fallback.output) this.fallback.output.textContent = '';
+      });
       const wsInput = document.getElementById('terminalWsUrl');
       const saved = (window.AppState && AppState.settings && AppState.settings.terminalWs != null) ? String(AppState.settings.terminalWs).trim() : '';
       if (wsInput) wsInput.value = saved;
@@ -325,36 +380,56 @@
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         try { this.socket.send(JSON.stringify({ type: 'input', data })); }
         catch { try { this.socket.send(data); } catch {} }
+        return;
       }
-      // browser mode: ignore interactive keystrokes (commands run via executeCommand)
+      // native fallback: ignore raw keystrokes; commands run via executeCommand on submit
     },
 
     // Back-compat
     send(data) { this.sendInteractive(data); },
 
     write(text) {
-      if (!this.term) return;
       const s = String(text == null ? '' : text);
       if (!s) return;
-      const normalized = s.replace(/\r?\n/g, '\r\n');
-      this.term.write(normalized.endsWith('\r\n') ? normalized : normalized + '\r\n');
+      if (this.term) {
+        const normalized = s.replace(/\r?\n/g, '\r\n');
+        this.term.write(normalized.endsWith('\r\n') ? normalized : normalized + '\r\n');
+        return;
+      }
+      if (this.fallback && this.fallback.output) {
+        const out = this.fallback.output;
+        const plain = s.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n');
+        out.textContent += (out.textContent && !out.textContent.endsWith('\n') ? '\n' : '') + plain + (plain.endsWith('\n') ? '' : '\n');
+        out.scrollTop = out.scrollHeight;
+      }
     },
 
     writeRaw(text) {
-      if (!this.term) return;
       const s = String(text == null ? '' : text);
       if (!s) return;
-      // Preserve carriage returns; normalize bare \n for xterm
-      const normalized = s.replace(/\r?\n/g, (m) => m === '\r\n' ? '\r\n' : '\r\n');
-      // avoid double-normalizing existing \r\n sequences badly
-      this.term.write(String(text).replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+      if (this.term) {
+        // Preserve carriage returns; normalize bare \n for xterm
+        const normalized = s.replace(/\r?\n/g, (m) => m === '\r\n' ? '\r\n' : '\r\n');
+        // avoid double-normalizing existing \r\n sequences badly
+        this.term.write(String(text).replace(/\r\n/g, '\n').replace(/\n/g, '\r\n'));
+        return;
+      }
+      if (this.fallback && this.fallback.output) {
+        const out = this.fallback.output;
+        const plain = String(text).replace(/\x1b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        out.textContent += plain;
+        out.scrollTop = out.scrollHeight;
+      }
     },
 
     show(show = true) {
       const pane = document.getElementById('terminalPane');
       if (!pane) return;
       pane.classList.toggle('hidden', !show);
-      if (show) setTimeout(() => this.fit && this.fit.fit(), 50);
+      if (show) setTimeout(() => {
+        if (this.fit) try { this.fit.fit(); } catch {}
+        if (this.fallback && this.fallback.input) try { this.fallback.input.focus(); } catch {}
+      }, 50);
     },
 
     toggle() {

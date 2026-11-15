@@ -12,7 +12,7 @@
   const FB = {
     app: null, auth: null, db: null, user: null, ready: false,
     googleClientId: '88418113812-2eatncg73fvuqa8nl7cirjre155kfprs.apps.googleusercontent.com',
-    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false, _gisInitialized: false, _gisRendered: false,
+    _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false, _gisInitialized: false, _gisRendered: false, _handlingOAuthRedirect: false,
 
     init() {
       try {
@@ -25,7 +25,8 @@
         this.ready = true;
         this.auth.onAuthStateChanged((user) => this.onAuthStateChanged(user));
         this.bindAuthUI();
-        this.initGoogleIdentity();
+        // Same-window OAuth redirect result (id_token in URL hash) for WebView-safe Google sign-in
+        this.handleGoogleRedirectResult().catch(e => console.error('[Firebase] Google redirect handling failed', e));
       } catch (e) { console.error('[Firebase] init failed', e); }
     },
 
@@ -164,6 +165,7 @@
       if (btn) btn.addEventListener('click', () => { if (this.user) this.openAccountModal(); else this.openSignInModal(); });
       const closeSignIn = document.getElementById('btnCloseSignIn'); if (closeSignIn) closeSignIn.addEventListener('click', () => this.closeSignInModal());
       const signInModal = document.getElementById('signInModal'); if (signInModal) signInModal.addEventListener('click', (e) => { if (e.target.id === 'signInModal') this.closeSignInModal(); });
+      const googleBtn = document.getElementById('btnGoogleSignIn'); if (googleBtn) googleBtn.addEventListener('click', () => this.signInWithGoogle());
       const emailForm = document.getElementById('emailAuthForm'); if (emailForm) emailForm.addEventListener('submit', (e) => { e.preventDefault(); this.signInWithEmail(); });
       const signUpBtn = document.getElementById('btnEmailSignUp'); if (signUpBtn) signUpBtn.addEventListener('click', () => this.signUpWithEmail());
     },
@@ -177,62 +179,71 @@
     openAccountModal() { if (confirm('Sign out of ' + ((this.user && (this.user.email || this.user.displayName)) || 'account') + '?')) this.signOut(); },
 
     initGoogleIdentity() {
-      const tryInit = () => {
-        if (this._gisInitialized) return true;
-        if (!(window.google && google.accounts && google.accounts.id)) return false;
-        try {
-          google.accounts.id.initialize({
-            client_id: this.googleClientId,
-            ux_mode: 'popup',
-            callback: (response) => this.handleGoogleCredentialResponse(response),
-            auto_select: false,
-            cancel_on_tap_outside: true
-          });
-          this._gisInitialized = true;
-          this.renderGoogleButton();
-          return true;
-        } catch (e) {
-          console.error('[Firebase] GIS init failed', e);
-          return false;
-        }
-      };
-      if (tryInit()) return;
-      let attempts = 0;
-      const timer = setInterval(() => {
-        attempts++;
-        if (tryInit() || attempts > 100) clearInterval(timer);
-      }, 100);
-      window.addEventListener('load', () => { tryInit(); this.renderGoogleButton(); }, { once: true });
+      // No-op: Google sign-in uses same-window OAuth implicit id_token redirect flow.
     },
 
     renderGoogleButton() {
-      const container = document.getElementById('googleGisButtonContainer') || document.getElementById('signInModal');
-      if (!container || !(window.google && google.accounts && google.accounts.id)) return;
-      if (container.id === 'signInModal') {
-        // do not render into whole modal by mistake
-        const inner = document.getElementById('googleGisButtonContainer');
-        if (!inner) return;
-      }
-      const target = document.getElementById('googleGisButtonContainer');
-      if (!target) return;
+      // No-op: custom "Continue with Google" button triggers same-window OAuth flow.
+    },
+
+    async handleGoogleRedirectResult() {
       try {
-        const width = Math.max(240, Math.min((target.clientWidth || target.parentElement?.clientWidth || 320), 360));
-        target.innerHTML = '';
-        google.accounts.id.renderButton(target, {
-          type: 'standard',
-          theme: 'outline',
-          size: 'large',
-          text: 'continue_with',
-          shape: 'rectangular',
-          width
-        });
-        this._gisRendered = true;
+        const hash = String(window.location.hash || '').replace(/^#/, '');
+        if (!hash) return false;
+        const params = new URLSearchParams(hash);
+        const idToken = params.get('id_token');
+        if (!idToken) return false;
+
+        const error = params.get('error');
+        const errorDesc = params.get('error_description') || params.get('error_subtype') || '';
+
+        // Clean URL hash immediately (avoid re-processing on refresh)
+        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch {}
+
+        const savedNonce = sessionStorage.getItem('apex_google_oauth_nonce');
+        try { sessionStorage.removeItem('apex_google_oauth_nonce'); } catch {}
+
+        if (error) throw new Error(decodeURIComponent(String(errorDesc || error)));
+
+        const payload = this.decodeJwtPayload(idToken);
+        if (savedNonce && payload && payload.nonce && payload.nonce !== savedNonce) {
+          throw new Error('Google sign-in nonce mismatch. Please try again.');
+        }
+
+        if (!this.auth) {
+          // Wait briefly for Firebase Auth init if redirect returns early
+          for (let i = 0; i < 40 && !this.auth; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        if (!this.auth) throw new Error('Firebase Auth not ready');
+
+        this._handlingOAuthRedirect = true;
+        const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+        await this.auth.signInWithCredential(credential);
+        this.closeSignInModal();
+        if (window.Utils) Utils.toast('Signed in with Google', 'success');
+        return true;
       } catch (e) {
-        console.error('[Firebase] GIS render failed', e);
+        console.error('[Firebase] Google redirect sign-in failed', e);
+        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
+        return false;
+      } finally {
+        this._handlingOAuthRedirect = false;
       }
     },
 
+    decodeJwtPayload(token) {
+      try {
+        const part = String(token || '').split('.')[1];
+        if (!part) return null;
+        const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+        const json = decodeURIComponent(atob(b64 + pad).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        return JSON.parse(json);
+      } catch { return null; }
+    },
+
     async handleGoogleCredentialResponse(response) {
+      // Legacy GIS callback support (not used by same-window redirect flow)
       try {
         if (!response || !response.credential) throw new Error('No Google credential received');
         if (!this.auth) throw new Error('Firebase Auth not ready');
@@ -247,11 +258,26 @@
     },
 
     async signInWithGoogle() {
-      // Google sign-in is provided by Google Identity Services button in the sign-in modal.
-      this.initGoogleIdentity();
-      this.renderGoogleButton();
-      if (!(window.google && google.accounts && google.accounts.id)) {
-        if (window.Utils) Utils.toast('Google Sign-In is loading. Please try again.', 'info');
+      if (this._handlingOAuthRedirect) return;
+      // Same-window OAuth 2.0 implicit id_token flow (WebView-safe: no external Chrome popup / gsi transform window)
+      try {
+        const nonceBytes = new Uint8Array(16);
+        if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(nonceBytes);
+        else for (let i = 0; i < nonceBytes.length; i++) nonceBytes[i] = Math.floor(Math.random() * 256);
+        const nonce = Array.from(nonceBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        try { sessionStorage.setItem('apex_google_oauth_nonce', nonce); } catch {}
+        const params = new URLSearchParams({
+          client_id: this.googleClientId,
+          redirect_uri: window.location.origin,
+          response_type: 'id_token',
+          scope: 'openid email profile',
+          nonce,
+          prompt: 'select_account'
+        });
+        window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+      } catch (e) {
+        console.error('[Firebase] Google OAuth redirect start failed', e);
+        if (window.Utils) Utils.toast('Google sign-in failed: ' + (e && e.message ? e.message : e), 'error');
       }
     },
     async signInWithEmail() {
