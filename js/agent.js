@@ -288,14 +288,15 @@
         const fence = part.match(/^```([^\n`]*)\n?([\s\S]*?)```$/);
         if (fence) {
           const rawLang = String(fence[1] || '').trim();
-          const lang = (rawLang.split(/\s+/)[0] || 'text').toLowerCase();
+          const langToken = (rawLang.split(/\s+/)[0] || '').trim().toLowerCase();
+          const langLabel = rawLang || 'plain';
+          const highlightLang = (langLabel.toLowerCase() === 'json' ? 'json' : langToken) || 'plaintext';
           const code = String(fence[2] || '').replace(/\n$/, '');
-          const langLabel = lang === 'json:edits' ? 'json:edits' : lang;
           let highlighted = this.escapeHtml(code);
           try {
             if (window.hljs) {
-              if (lang && lang !== 'text' && lang !== 'plain' && hljs.getLanguage && hljs.getLanguage(lang)) {
-                highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+              if (highlightLang && highlightLang !== 'plaintext' && highlightLang !== 'plain' && hljs.getLanguage && hljs.getLanguage(highlightLang)) {
+                highlighted = hljs.highlight(code, { language: highlightLang, ignoreIllegals: true }).value;
               } else if (hljs.highlightAuto) {
                 const auto = hljs.highlightAuto(code);
                 highlighted = auto && auto.value ? auto.value : highlighted;
@@ -303,9 +304,9 @@
             }
           } catch { highlighted = this.escapeHtml(code); }
           html += `<div class="code-card" data-lang="${this.escapeHtml(langLabel)}">` +
-            `<div class="code-card-bar"><span class="code-card-lang">${this.escapeHtml(langLabel || 'text')}</span>` +
-            `<button type="button" class="code-copy-btn" data-copy-code="1">Copy</button></div>` +
-            `<pre><code class="hljs language-${this.escapeHtml(langLabel || 'text')}">${highlighted}</code></pre></div>`;
+            `<div class="code-card-bar"><span class="code-card-lang">${this.escapeHtml(langLabel)}</span>` +
+            `<button type="button" class="code-copy-btn" data-copy-code="1" aria-label="Copy code">Copy</button></div>` +
+            `<pre class="code-card-pre"><code class="hljs language-${this.escapeHtml(highlightLang || 'plaintext')}">${highlighted}</code></pre></div>`;
         } else {
           html += this.renderInlineMarkdown(part);
         }
