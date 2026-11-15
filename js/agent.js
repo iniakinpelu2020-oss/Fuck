@@ -427,7 +427,8 @@
     },
 
     renderMarkdownWithCodeBlocks(content) {
-      const src = String(content ?? '').replace(/\r\n?/g, '\n');
+      try {
+      const src = String(content == null ? '' : content).replace(/\r\n?/g, '\n');
       const parts = src.split(/(```[\s\S]*?```)/g);
       let html = '';
       for (const part of parts) {
@@ -459,10 +460,15 @@
         }
       }
       return `<div class="chat-md">${html || ''}</div>`;
+      } catch (e) {
+        console.error('[Agent.renderMarkdownWithCodeBlocks]', e);
+        return `<div class="chat-md"><pre class="chat-content">${this.escapeHtml(String(content == null ? '' : content))}</pre></div>`;
+      }
     },
 
     renderInlineMarkdown(text) {
-      const lines = String(text ?? '').split('\n');
+      try {
+      const lines = String(text == null ? '' : text).split('\n');
       let out = '';
       let inUl = false, inOl = false;
       const flush = () => { if (inUl) { out += '</ul>'; inUl = false; } if (inOl) { out += '</ol>'; inOl = false; } };
@@ -493,6 +499,10 @@
       }
       flush();
       return out;
+      } catch (e) {
+        console.error('[Agent.renderInlineMarkdown]', e);
+        return `<p>${this.escapeHtml(String(text == null ? '' : text)).replace(/\n/g, '<br>')}</p>`;
+      }
     },
 
     renderEditCards(actions, opts = {}) {
