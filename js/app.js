@@ -7,6 +7,13 @@
       this.bindMobile();
       this.bindDownloadApp();
       this.restoreSettingsUI();
+      // Default Attach Workspace Context to unchecked on load
+      try {
+        if (AppState.settings) AppState.settings.attachWorkspaceContext = false;
+        const ac = document.getElementById('agentAttachWorkspaceContext') || document.getElementById('attachWorkspaceContext');
+        if (ac) ac.checked = false;
+        if (typeof AppState.saveSettings === 'function') AppState.saveSettings();
+      } catch {}
 
       FileTree.init();
       Editor.init();
@@ -933,6 +940,12 @@
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
 
     createNewChat() {
+      try {
+        if (AppState.settings) AppState.settings.attachWorkspaceContext = false;
+        const ac = document.getElementById('agentAttachWorkspaceContext') || document.getElementById('attachWorkspaceContext');
+        if (ac) ac.checked = false;
+        if (typeof AppState.saveSettings === 'function') AppState.saveSettings();
+      } catch {}
       const session = AppState.createChat('New chat');
       AppState.saveActiveChatId(session.id);
       this.renderChatHistory();

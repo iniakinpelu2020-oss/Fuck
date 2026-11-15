@@ -1728,12 +1728,13 @@
       const lower = text.toLowerCase();
       const trimmed = text.trim();
 
-      const MAX_CONTEXT_CHARS = 16000; // ~4k tokens total for injected workspace context
-      const MAX_TREE_ENTRIES = 180;
-      const MAX_TREE_CHARS = 5000;
-      const MAX_FILE_CONTENT_CHARS = 4000;
-      const MAX_BINARY_SUMMARY_CHARS = 1200;
-      const LARGE_FILE_SKIP_CHARS = 40000;
+      // Strict cap when Attach Workspace Context is checked to stay within Managed Workers AI limits (~32k tokens total)
+      const MAX_CONTEXT_CHARS = attach ? 12000 : 16000; // ~3k tokens attached bundle, ~4k otherwise
+      const MAX_TREE_ENTRIES = attach ? 140 : 180;
+      const MAX_TREE_CHARS = attach ? 3500 : 5000;
+      const MAX_FILE_CONTENT_CHARS = attach ? 2500 : 4000;
+      const MAX_BINARY_SUMMARY_CHARS = attach ? 800 : 1200;
+      const LARGE_FILE_SKIP_CHARS = 40000; // skip oversized files
 
       const norm = (p) => String(p || '').replace(/^\/+/, '').trim();
       const isExcludedWorkspacePath = (p) => {
@@ -1818,8 +1819,12 @@
       };
 
       if (attach) {
-        // Prioritize only currently open editor file plus compact file-tree list
-        if (activeVisible) pushUnique(activePath);
+        // Prioritize only currently open editor file plus compact file-tree list (skip large files)
+        if (activeVisible) {
+          const f = AppState.files.get(activePath);
+          const len = f ? (f.binary ? String((f.meta && (f.meta.summary || f.meta.report)) || '').length : String(f.content == null ? '' : f.content).length) : 0;
+          if (f && len <= LARGE_FILE_SKIP_CHARS) pushUnique(activePath);
+        }
       } else {
         const canIncludePath = (p) => {
           const path = norm(p);
@@ -1926,12 +1931,46 @@
     },
 
     // --- Autonomous tool routing heuristics ---
+    shouldRouteToTerminalExecution(prompt) {
+      const text = String(prompt || '').trim();
+      if (!text) return false;
+      const firstLine = text.split(/\r?\n/, 1)[0].trim();
+      // Explicit terminal execution requests
+      if (/^\s*(run|execute)\b[^\n]*\b(remote\s+)?terminal\b/i.test(firstLine)) return true;
+      if (/^\s*execute\s+in\s+terminal\b/i.test(firstLine)) return true;
+      if (/\b(run|execute)\b[^\n]*\b(in|on|via|using)\b[^\n]*\b(remote\s+)?(terminal|runner|shell|codespace)\b/i.test(text)) return true;
+
+      // Command/tool invocations that must route to terminal/agent execution (never web search)
+      if (/^\s*(npx|node|git)\b/i.test(firstLine)) return true;
+      if (/^\s*rea(\s|$)/i.test(firstLine)) return true;
+      if (/^\s*(npm|pnpm|yarn|deno|bun|python3?|pip3?|gh|docker|kubectl|cargo|go|java|javac|mvn|gradle|ruby|bundle|rails|php|composer|dotnet|swift|clang|gcc|g\+\+|make|cmake|bash|sh|zsh|curl|wget|ssh|scp|rsync|terraform|ansible|helm|az|aws|gcloud|firebase)\b/i.test(firstLine)) return true;
+      if (/^\.\/[^\s]+/.test(firstLine)) return true;
+
+      // Prompts starting with or mentioning these command/tool tokens/phrases in execution context
+      if (/^\s*(please\s+)?(run|execute)\s+/i.test(text) && /(^|[\s"'`(])(npx|node|git|rea)(\s|$|["'`),;.:])/i.test(text)) return true;
+      if (/(^|[\s"'`(])(npx)(\s|$|["'`),;.:])/i.test(text)) return true;
+      if (/(^|[\s"'`(])rea(\s|$|["'`),;.:])/i.test(text)) return true;
+      if (/(^|[\s"'`(])git(\s|$|["'`),;.:])/i.test(text) && /\b(run|execute|terminal|shell|runner|command|remote|status|diff|commit|push|pull|clone|checkout|branch|merge|log|rebase|stash|fetch|add|init)\b/i.test(text)) return true;
+      if (/(^|[\s"'`(])node(\s|$|["'`),;.:])/i.test(text) && /\b(run|execute|terminal|shell|runner|command|script|\.js\b|\.mjs\b|\.cjs\b)\b/i.test(text)) return true;
+
+      return false;
+    },
     shouldSearch(prompt) {
-      const p = String(prompt || '').toLowerCase();
-      if (/(https?:\/\/)/.test(p)) return false; // direct URL fetch not our search tool
-      const intent = /(search|look up|lookup|google|find online|web|internet|docs|documentation|latest|current|today|news|release|version|changelog|price|weather|who is|what is|when did|how to .*(202\d|latest)|compare .* (vs|versus) .* (202\d|latest)|error .* fix .* (202\d|latest))/i;
+      const raw = String(prompt || '').trim();
+      if (!raw) return false;
+      // Terminal/agent execution intent takes precedence and must never route to web_search
+      if (this.shouldRouteToTerminalExecution(raw)) return false;
+      if (/^\s*(run|execute)\b[^\n]*\b(remote\s+)?terminal\b/i.test(raw) || /\bexecute\s+in\s+terminal\b/i.test(raw)) return false;
+      if (/(^|[\s"'`(])(npx|rea)(\s|$|["'`),;.:])/i.test(raw)) return false;
+      if (/(^|[\s"'`(])(node|git)(\s|$|["'`),;.:])/i.test(raw)) return false;
+
+      const lower = raw.toLowerCase();
+      if (/(https?:\/\/)/.test(lower)) return false; // direct URL fetch not our search tool
+      const explicitWeb = /\b(search|look up|lookup|google|find online|web search|search the web|internet|online docs|documentation online)\b/i.test(raw);
+      if (explicitWeb) return true;
+      const intent = /(docs|documentation|latest|current|today|news|release|version|changelog|price|weather|who is|what is|when did|how to .*(202\d|latest)|compare .* (vs|versus) .* (202\d|latest)|error .* fix .* (202\d|latest))/i;
       const live = /(202[4-9]|latest|newest|current|recent|today|now|breaking)/i;
-      return intent.test(prompt) || (live.test(prompt) && /(what|who|when|which|news|release|version|docs|api)/i.test(prompt));
+      return intent.test(raw) || (live.test(raw) && /(what|who|when|which|news|release|version|docs|api)/i.test(raw));
     },
     isExplicitN8nCommand(prompt) {
       const p = String(prompt || '').trim();
@@ -1983,7 +2022,7 @@
         const res = await this.fetchWithRetry(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, numResults: 5 })
+          body: JSON.stringify({ method: 'web_search', action: 'web_search', tool: 'web_search', query, numResults: 5 })
         }, 1, 1000);
         if (!res.ok) {
           const t = await res.text().catch(() => '');
