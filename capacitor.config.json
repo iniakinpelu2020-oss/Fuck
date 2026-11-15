@@ -1,0 +1,10 @@
+{
+  "appId": "com.drippydee.apexstudio",
+  "appName": "Apex Studio",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
