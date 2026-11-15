@@ -448,13 +448,15 @@
 
         // Managed Workers AI presets route through /api/chat; health ping /api/models or /v1/models
         let ok = false;
-        let title = 'Managed endpoint reachable';
-        const candidates = ['/api/models', '/v1/models'];
-        for (const path of candidates) {
+        let title = 'Managed endpoint unreachable';
+        for (const path of ['/api/models', '/v1/models']) {
           try {
             const res = await fetch(path, { method: 'GET', cache: 'no-store' });
-            if (res.status === 200) { ok = true; title = `Managed endpoint reachable (${path})`; break; }
-            if (res.ok) { ok = true; title = `Managed endpoint reachable (${path})`; break; }
+            if (res.status === 200) {
+              ok = true;
+              title = `Managed endpoint reachable (${path})`;
+              break;
+            }
             title = `Managed endpoint responded with HTTP ${res.status} (${path})`;
           } catch (e) {
             title = `Managed endpoint unreachable (${path}): ${String((e && e.message) || e || 'network error')}`;
@@ -509,6 +511,17 @@
           this.refreshHeaderModelStatus({ reloadLocalModels: false });
         });
       }
+
+      // Ensure agent chat view and active session are ready so messages render immediately
+      try {
+        this.setView('agent');
+        if (window.Agent && typeof Agent.ensureActiveChatSession === 'function') {
+          Agent.ensureActiveChatSession();
+        } else if (!AppState.activeChatId || !AppState.getChat(AppState.activeChatId)) {
+          const s = AppState.createChat('New chat');
+          AppState.saveActiveChatId(s.id);
+        }
+      } catch {}
 
       // Initial sync/check (non-blocking)
       const initialPreset = this.inferHeaderPresetFromSettings();

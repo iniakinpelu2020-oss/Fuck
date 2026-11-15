@@ -649,7 +649,10 @@
     addMessage(role, content, meta = '', badges = [], opts = {}) {
       if (role !== 'assistant' || !opts.welcomePlaceholder) this.ensureActiveChatSession();
       const wrap = document.getElementById('chatMessages');
-      if (!wrap) return null;
+      if (!wrap) {
+        console.warn('[Agent.addMessage] chatMessages container missing', { role, meta });
+        return null;
+      }
 
       // Only remove welcome placeholder when explicitly requested (e.g. full re-render/reset)
       if (opts.removeWelcomePlaceholder) {
@@ -663,13 +666,21 @@
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
       const mode = (opts && opts.mode) || this.getAgentMode();
-      const bodyHtml = (role === 'assistant')
-        ? `<div class="chat-content">${this.renderMessageContent(content, { mode, applied: opts.applied || [] })}</div>`
-        : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
+      let bodyHtml = '';
+      try {
+        bodyHtml = (role === 'assistant')
+          ? `<div class="chat-content">${this.renderMessageContent(content, { mode, applied: opts.applied || [] })}</div>`
+          : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
+      } catch (e) {
+        console.error('[Agent.addMessage] render error', e);
+        bodyHtml = `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
+      }
       div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${bodyHtml}${this.renderBadges(badges)}`;
       wrap.appendChild(div);
-      if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
-      wrap.scrollTop = wrap.scrollHeight;
+      try {
+        if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
+      } catch (e) { console.error('[Agent.addMessage] attach actions failed', e); }
+      try { wrap.scrollTop = wrap.scrollHeight; } catch {}
 
       // Persist message to active chat session (never persist welcome/placeholder or when explicitly disabled)
       const shouldPersist = opts.persist !== false && !opts.welcomePlaceholder;
@@ -698,7 +709,11 @@
 
     createStreamingAssistantBubble(meta = 'chat', opts = {}) {
       const wrap = document.getElementById('chatMessages');
-      if (!wrap) return null;
+      if (!wrap) {
+        console.warn('[Agent.createStreamingAssistantBubble] chatMessages container missing');
+        return null;
+      }
+      this.ensureActiveChatSession();
       // Keep persistent welcome card at top; only remove when explicitly requested
       if (opts.removeWelcomePlaceholder) {
         wrap.querySelectorAll('[data-welcome-placeholder="1"]').forEach(el => el.remove());
@@ -738,11 +753,16 @@
           finalized = true;
           const full = (displayText != null ? String(displayText) : text);
           const mode = (fopts && fopts.mode) || bubbleMode || Agent.getAgentMode();
-          contentEl.innerHTML = Agent.renderMessageContent(full, { mode, applied: (fopts && fopts.applied) || [] });
+          try {
+            contentEl.innerHTML = Agent.renderMessageContent(full, { mode, applied: (fopts && fopts.applied) || [] });
+          } catch (e) {
+            console.error('[Agent.stream] finalize render error', e);
+            contentEl.innerHTML = `<pre class="chat-content">${Agent.escapeHtml(full)}</pre>`;
+          }
           const badgeArr = Array.isArray(badges) ? badges : [];
           if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badgeArr);
           div.classList.remove('streaming');
-          Agent.attachMessageActions(div, full);
+          try { Agent.attachMessageActions(div, full); } catch (e) { console.error('[Agent.stream] attach actions failed', e); }
           wrap.scrollTop = wrap.scrollHeight;
           if ((opts.persist !== false) && (fopts.persist !== false)) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
           return full;
@@ -847,6 +867,10 @@
       const prompt = input.value.trim();
       const chatAttachments = (window.Workspace && typeof Workspace.getPending === 'function') ? (Workspace.getPending() || []) : [];
       if (!prompt && !chatAttachments.length) return;
+
+      // Ensure active chat session is bound before rendering/persisting this turn
+      this.ensureActiveChatSession();
+      if (window.App && typeof App.setView === 'function') { try { App.setView('agent'); } catch {} }
 
       // Back-compat: explicit /n8n or "trigger n8n" commands only
       if (this.isExplicitN8nCommand(prompt)) {
