@@ -354,20 +354,24 @@
       return (s === 'chat' || s === 'agent' || s === 'edit') ? s : 'agent';
     },
 
-    getEffectiveSystemPrompt(mode) {
-      const m = mode || this.getAgentMode();
+    getEffectiveSystemPrompt(mode, prompt = '') {
+      let m = mode || this.getAgentMode();
+      const p = String(prompt == null ? '' : prompt);
+      // REA / reverse-engineering intent: force agent/terminal-tool mode, never chat mode
+      if (this.shouldForceAgentModeForIntent(p)) m = 'agent';
       const base = String((window.AppState && AppState.settings && AppState.settings.systemPrompt) || '').trim();
       const collab = '\n\nCollaborate like a sharp human teammate. For casual greetings or general questions, reply naturally and directly; do not summarize workspace files, starter files, or project state unless the user asks about them or relevant context is explicitly provided.';
       const mcpInstr = '\n\n--- Autonomous MCP tool calling ---\n' +
         'When you need to use an MCP tool, emit either (1) native OpenAI-compatible tool_calls, (2) a fenced ```json:mcp``` block, or (3) a raw JSON object {"name":"mcp__<server>__<tool>","arguments":{...}}. ' +
         'The runtime intercepts it, executes via MCPClient.callTool(server, tool, args), renders a compact tool-execution status pill, appends the tool result to conversation history, and continues your turn automatically (up to 5 tool hops) until you produce a final plain-English response. Do not repeat the same tool call unnecessarily.';
+      const reaInstr = (typeof this.getReaSystemInstructions === 'function') ? this.getReaSystemInstructions(p) : '';
       if (m === 'chat') {
-        return base + collab + mcpInstr + '\n\n--- Response Mode: Chat ---\n' +
+        return base + collab + mcpInstr + reaInstr + '\n\n--- Response Mode: Chat ---\n' +
           'Reply in clear, helpful plain English. Use standard fenced Markdown code blocks (```language ... ```). ' +
           'Do NOT emit ```json:edits``` blocks and do not claim to have modified files or run commands unless results are explicitly provided in context. ' +
           'If the user asks for code changes, provide the code in normal Markdown fenced blocks with explanations.';
       }
-      return base + collab + mcpInstr + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
+      return base + collab + mcpInstr + reaInstr + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
         'When you need to create, update, or modify workspace files, return a fenced ```json:edits``` block with this shape:\n' +
         '{"edits":[{"path":"relative/path","content":"new full file content"}],"terminal":[{"command":"..."}],"notes":"short summary"}\n' +
         'Prefer precise, minimal edits. If no edits are needed, use an empty edits array or omit the block. Keep user-facing prose clean; the UI will present file changes as structured cards.\n' +
@@ -928,7 +932,15 @@
       try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch {}
       msgEl.remove();
       this.setGenerating(true);
-      const currentMode = this.getAgentMode();
+      let currentMode = this.getAgentMode();
+      try {
+        if (this.shouldForceAgentModeForIntent(prompt)) {
+          currentMode = 'agent';
+          if (AppState && AppState.settings) AppState.settings.agentMode = 'agent';
+          const sel = document.getElementById('agentModeSelect'); if (sel) sel.value = 'agent';
+          try { if (AppState && typeof AppState.saveSettings === 'function') AppState.saveSettings(); } catch {}
+        }
+      } catch {}
       const streamBubble = this.createStreamingAssistantBubble('chat', { mode: currentMode });
       try {
         await this.runPrompt(prompt, { fromUI: false, streamBubble, attachments: attachments.slice() });
@@ -995,8 +1007,16 @@
       // Save last prompt/attachments for Regenerate
       this._lastUserPrompt = prompt;
       this._lastUserAttachments = Array.isArray(chatAttachments) ? chatAttachments.slice() : [];
-      // Immediate animated "Thinking..." pulse inside assistant bubble
-      const currentMode = this.getAgentMode();
+      // Immediate animated "Thinking..." pulse inside assistant bubble (REA/RE intent forces agent mode)
+      let currentMode = this.getAgentMode();
+      try {
+        if (this.shouldForceAgentModeForIntent(prompt)) {
+          currentMode = 'agent';
+          if (AppState && AppState.settings) AppState.settings.agentMode = 'agent';
+          const sel = document.getElementById('agentModeSelect'); if (sel) sel.value = 'agent';
+          try { if (AppState && typeof AppState.saveSettings === 'function') AppState.saveSettings(); } catch {}
+        }
+      } catch {}
       const streamBubble = this.createStreamingAssistantBubble('chat', { mode: currentMode });
       try {
         await this.runPrompt(prompt, { fromUI: true, streamBubble, attachments: chatAttachments });
@@ -1624,9 +1644,10 @@
       }
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
+      const _promptHint = (opts && Object.prototype.hasOwnProperty.call(opts, 'promptHint')) ? opts.promptHint : '';
       const system = (opts && Object.prototype.hasOwnProperty.call(opts, 'system'))
         ? String(opts.system == null ? '' : opts.system)
-        : ((typeof this.getEffectiveSystemPrompt === 'function') ? this.getEffectiveSystemPrompt(this.getAgentMode()) : String((AppState.settings && AppState.settings.systemPrompt) || ''));
+        : ((typeof this.getEffectiveSystemPrompt === 'function') ? this.getEffectiveSystemPrompt(this.getAgentMode(), _promptHint) : String((AppState.settings && AppState.settings.systemPrompt) || ''));
       // Enable SSE streaming (stream: true) for live token rendering by default on OpenAI-compatible endpoints
       const wantStream = opts.stream !== false && provider !== 'anthropic' && !opts.disableStream;
       let lastError = null;
@@ -1931,9 +1952,58 @@
     },
 
     // --- Autonomous tool routing heuristics ---
+    isReaMention(prompt) {
+      const s = String(prompt || '');
+      return /\brea\b/i.test(s)
+        || /\binspect-artifact\b/i.test(s)
+        || /\baudit-release-exposure\b/i.test(s);
+    },
+    isReverseEngineeringIntent(prompt) {
+      const s = String(prompt || '');
+      return /\brea\b/i.test(s)
+        || /reverse engineer/i.test(s)
+        || /\bdecompile\b/i.test(s)
+        || /\bapk\b/i.test(s)
+        || /\bbinary\b/i.test(s)
+        || /\bdisassemble\b/i.test(s)
+        || /\bstrings\b/i.test(s)
+        || /\baudit-release-exposure\b/i.test(s)
+        || /\binspect-artifact\b/i.test(s);
+    },
+    shouldForceAgentModeForIntent(prompt) {
+      return this.isReverseEngineeringIntent(prompt);
+    },
+    getReaSystemInstructions(prompt) {
+      if (!this.isReaMention(prompt)) return '';
+      return '\n\n--- REA / Reverse-Engineering Execution (MANDATORY when rea/REA is mentioned) ---\n' +
+        'Whenever the user mentions `rea` or `REA` (e.g. "use rea on app.apk", "run rea inspect-artifact ...", "check this with rea"), you MUST immediately invoke the remote terminal tool to run REA using `npx -y rea-agents@latest <subcommand> <target>` (default to `inspect-artifact` or `analyze` if no specific subcommand is named). Do NOT ask clarifying questions first and do NOT give generic advice instead of running it. Execute the command now via a terminal action (e.g. a ```json:edits``` block with `"terminal":[{"command":"npx -y rea-agents@latest inspect-artifact <target>"}]`) or the available shell/terminal tool so it runs on the remote runner.\n\n' +
+        'REA subcommand cheat-sheet (pick the right command automatically; do not run `--help`):\n' +
+        '- `inspect-artifact <target>`: general artifact inspection (default starting point)\n' +
+        '- `analyze <target>`: broad analysis\n' +
+        '- `search-android-classes <apk> [query/options]`: search Android classes/DEX\n' +
+        '- `inspect-android-class <apk> <class>`: inspect a specific Android class\n' +
+        '- `identify-flutter-build <target>`: detect Flutter build artifacts\n' +
+        '- `inspect-binary-hardening <binary>`: check binary hardening/protections\n' +
+        '- `inspect-byte-entropy <target>`: entropy/packing signals\n' +
+        '- `analyze-web-bundle <bundle>`: inspect JS/web bundles\n' +
+        '- `audit-release-exposure <target>`: audit release exposure/secrets/config risks\n' +
+        '- `inspect-sqlite-database <db>`: inspect SQLite databases\n' +
+        '- `inspect-pcap-capture <pcap>`: inspect network captures\n' +
+        '- `search <target> <pattern/options>`: search within artifact\n' +
+        '- `trace <target> [options]`: trace behavior/flow where supported\n\n' +
+        'After running the initial `rea` inspection, summarize findings and present actionable **Suggested Next Probes** tailored to the target type (and execute the next logical `rea` probe if asked):\n' +
+        '1. Trace relevant capability strings/import hints to suspected feature areas (network, filesystem, crypto, process, persistence) and record offset/section evidence where available.\n' +
+        '2. If PE: inspect entry point, imports/exports, resources, overlay, and high-entropy/large sections for embedded payloads or installers.\n' +
+        '3. If archive/APK: review manifests, scripts, native libraries (.so), DEX/classes, and config files for permissions/endpoints/entry points.\n' +
+        '4. Search extracted strings for URLs, domains, registry keys, file paths, command lines, and error messages tied to behavior of interest.\n' +
+        '5. For deeper reverse engineering, analyze in authorized environments with native RE tools (Ghidra/IDA/Hopper/rizin) and, if needed, controlled dynamic instrumentation.\n' +
+        '6. Validate hypotheses against additional static/dynamic evidence.';
+    },
     shouldRouteToTerminalExecution(prompt) {
       const text = String(prompt || '').trim();
       if (!text) return false;
+      // REA / reverse-engineering intent: force agent/terminal-tool mode, never web_search
+      if (this.isReverseEngineeringIntent(text)) return true;
       const firstLine = text.split(/\r?\n/, 1)[0].trim();
       // Explicit terminal execution requests
       if (/^\s*(run|execute)\b[^\n]*\b(remote\s+)?terminal\b/i.test(firstLine)) return true;
@@ -1958,6 +2028,8 @@
     shouldSearch(prompt) {
       const raw = String(prompt || '').trim();
       if (!raw) return false;
+      // REA / reverse-engineering intent: force agent/terminal-tool mode, never web_search
+      if (typeof this.isReverseEngineeringIntent === 'function' && this.isReverseEngineeringIntent(raw)) return false;
       // Terminal/agent execution intent takes precedence and must never route to web_search
       if (this.shouldRouteToTerminalExecution(raw)) return false;
       if (/^\s*(run|execute)\b[^\n]*\b(remote\s+)?terminal\b/i.test(raw) || /\bexecute\s+in\s+terminal\b/i.test(raw)) return false;
@@ -2102,8 +2174,10 @@
 
       const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       const attachCtx = !!(AppState && AppState.settings && AppState.settings.attachWorkspaceContext) || !!((typeof document !== 'undefined') && ((document.getElementById('attachWorkspaceContext') || document.getElementById('agentAttachWorkspaceContext') || {}).checked));
+      let _runMode = this.getAgentMode();
+      try { if (this.shouldForceAgentModeForIntent(prompt)) _runMode = 'agent'; } catch {}
       let contextBlock = this.collectWorkspaceSummary(prompt, {
-        mode: this.getAgentMode(),
+        mode: _runMode,
         attachments,
         attachWorkspaceContext: attachCtx
       });
@@ -2194,7 +2268,8 @@
             const res = await this.callLLM(messages, {
               stream: round === 0,
               onDelta: round === 0 ? (delta) => { if (streamBubble) streamBubble.append(delta); } : undefined,
-              tools: llmTools
+              tools: llmTools,
+              promptHint: prompt
             });
             const text = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
             const toolCalls = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
@@ -2276,7 +2351,8 @@
         } else {
           const res = await this.callLLM(userPayload, {
             stream: true,
-            onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); }
+            onDelta: (delta) => { if (streamBubble) streamBubble.append(delta); },
+            promptHint: prompt
           });
           answer = (res && typeof res === 'object') ? (res.text || '') : String(res || '');
           nativeToolCallsAccum = (res && Array.isArray(res.toolCalls)) ? res.toolCalls : [];
@@ -2323,7 +2399,7 @@
           }
           if (!_results.length) break;
           const cont = prompt + '\n\n[Autonomous MCP tool execution results]\n' + _results.join('\n\n').slice(0, 12000) + '\n\nContinue with these results and provide the final plain-English response. Do not repeat the same tool call unless necessary.';
-          const cres = await this.callLLM(cont, { stream: true, onDelta: (d) => { if (streamBubble) streamBubble.append(d); } });
+          const cres = await this.callLLM(cont, { stream: true, onDelta: (d) => { if (streamBubble) streamBubble.append(d); }, promptHint: prompt });
           answer = (cres && typeof cres === 'object') ? (cres.text || answer) : (String(cres || '') || answer);
         }
       } catch (e) { console.error('Autonomous MCP text loop error', e); }
