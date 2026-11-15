@@ -11,7 +11,7 @@
 
   const FB = {
     app: null, auth: null, db: null, user: null, ready: false,
-    googleClientId: '166973140410-1129i7oebval1719ji794135dt3g7c8i.apps.googleusercontent.com',
+    googleClientId: '88418113812-2eatncg73fvuqa8nl7cirjre155kfprs.apps.googleusercontent.com',
     _unsubChats: null, _unsubConfig: null, _syncing: false, _syncingConfig: false, _gisInitialized: false, _gisRendered: false,
 
     init() {
