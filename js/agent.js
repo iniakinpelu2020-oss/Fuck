@@ -967,12 +967,13 @@
       this.ensureActiveChatSession();
       if (window.App && typeof App.setView === 'function') { try { App.setView('agent'); } catch {} }
 
-      // Auto-title new chat sessions from the first user prompt (fallback immediately, refine in background)
+      // Auto-title new/bad chat sessions from the first user prompt (fallback immediately, refine in background)
       try {
         const chatId = window.AppState && AppState.activeChatId;
         if (chatId && prompt) {
           const s = AppState.getChat ? AppState.getChat(chatId) : null;
-          if (s && String(s.title || '') === 'New chat') {
+          const t = s ? String(s.title || '') : '';
+          if (s && (!t || t === 'New chat' || /^[{\[]/.test(t.trim()))) {
             this.autoTitleChatSession(chatId, prompt);
           }
         }
@@ -1483,23 +1484,64 @@
       return JSON.stringify(data, null, 2);
     },
 
-  makeChatTitleFromPrompt(prompt, maxLen = 36) {
+  makeChatTitleFromPrompt(prompt, maxLen = 42) {
       try {
         let s = String(prompt == null ? '' : prompt).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
         if (!s) return 'New chat';
         s = s.replace(/^(please|can you|could you|would you|hey|hi|hello|help me|i need you to|i want you to)\b[:,\s-]*/i, '').trim() || s;
-        if (s.length > maxLen) s = s.slice(0, Math.max(1, maxLen - 1)).trimEnd() + '…';
+        s = s.replace(/^[{\[]+\s*/, '').trim() || s;
+        if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd();
         return s || 'New chat';
       } catch { return 'New chat'; }
+    },
+
+    isBadChatTitle(title) {
+      try {
+        const t = String(title == null ? '' : title).trim();
+        return !t || t === 'New chat' || /^[{\[]/.test(t);
+      } catch { return true; }
+    },
+
+    normalizeGeneratedChatTitle(raw, prompt, maxLen = 42) {
+      try {
+        let t = raw;
+        if (t && typeof t === 'object') {
+          t = t.title || t.name || t.chat_title || t.chatTitle || '';
+        }
+        if (typeof t === 'string') {
+          let s = t.trim();
+          // AI auto-title response may be JSON like {"title":"..."}
+          if (s.startsWith('{') || s.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(s);
+              if (parsed && typeof parsed === 'object') {
+                const cand = Array.isArray(parsed) ? (parsed[0] && (parsed[0].title || parsed[0].name)) : (parsed.title || parsed.name || parsed.chat_title || parsed.chatTitle || '');
+                if (cand != null) s = String(cand).trim();
+              }
+            } catch {}
+          }
+          s = s.split('\n')[0].replace(/["'`\u201c\u201d\u2018\u2019]/g, '').replace(/[.!?:;,]+$/g, '').replace(/\s+/g, ' ').trim();
+          if (s && !/^[{\[]/.test(s) && !/^new chat$/i.test(s)) {
+            const words = s.split(/\s+/).filter(Boolean).slice(0, 8);
+            if (words.length) s = words.join(' ');
+            if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd();
+            if (s) return s;
+          }
+        }
+      } catch {}
+      return this.makeChatTitleFromPrompt(prompt, maxLen);
     },
 
     async autoTitleChatSession(chatId, prompt) {
       try {
         if (!chatId || !window.AppState || typeof AppState.getChat !== 'function') return;
         const session = AppState.getChat(chatId);
-        if (!session || String(session.title || '') !== 'New chat') return;
+        if (!session) return;
+        const cur = String(session.title || '');
+        const isBadTitle = (t) => !t || t.trim() === '' || t === 'New chat' || /^[{\[]/.test(String(t).trim());
+        if (!isBadTitle(cur)) return;
 
-        const fallback = this.makeChatTitleFromPrompt(prompt, 36);
+        const fallback = this.makeChatTitleFromPrompt(prompt, 42);
         if (typeof AppState.updateChat === 'function') {
           AppState.updateChat(chatId, { title: fallback });
         } else {
@@ -1520,7 +1562,7 @@
             body: JSON.stringify({
               model: '@cf/qwen/qwen2.5-coder-32b-instruct',
               stream: false,
-              max_tokens: 20,
+              max_tokens: 24,
               temperature: 0.2,
               messages: [
                 { role: 'system', content: 'You generate short chat titles. Return only the title text.' },
@@ -1533,22 +1575,20 @@
         const ct = String(resp.headers.get('content-type') || '').toLowerCase();
         if (ct.includes('text/event-stream')) return;
         const data = await resp.json().catch(() => null);
-        let title = (typeof this.extractAssistantText === 'function') ? this.extractAssistantText('openai-compatible', data) : '';
-        if (!title && data && Array.isArray(data.choices)) title = (((data.choices[0] || {}).message || {}).content || '');
-        title = String(title || '').split('\n')[0].replace(/["'`\u201c\u201d\u2018\u2019]/g, '').replace(/[.!?:;,]+$/g, '').replace(/\s+/g, ' ').trim();
-        if (!title) return;
-        const words = title.split(/\s+/).filter(Boolean).slice(0, 6);
-        if (words.length) title = words.join(' ');
-        if (!title || /^new chat$/i.test(title)) return;
+        let rawTitle = (typeof this.extractAssistantText === 'function') ? this.extractAssistantText('openai-compatible', data) : '';
+        if (!rawTitle && data && Array.isArray(data.choices)) rawTitle = (((data.choices[0] || {}).message || {}).content || '');
+        if (!rawTitle && data && data.title) rawTitle = data.title;
+        const normalized = this.normalizeGeneratedChatTitle(rawTitle, userPrompt, 42);
+        if (!normalized || normalized === fallback || /^new chat$/i.test(normalized) || /^[{\[]/.test(String(normalized).trim())) return;
 
         const current = AppState.getChat(chatId);
         if (!current) return;
         const curTitle = String(current.title || '');
-        if (curTitle !== fallback && curTitle !== 'New chat') return;
+        if (curTitle !== fallback && curTitle !== 'New chat' && !/^[{\[]/.test(curTitle.trim())) return;
         if (typeof AppState.updateChat === 'function') {
-          AppState.updateChat(chatId, { title });
+          AppState.updateChat(chatId, { title: normalized });
         } else {
-          current.title = title;
+          current.title = normalized;
           current.updatedAt = Date.now();
           if (typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions();
         }

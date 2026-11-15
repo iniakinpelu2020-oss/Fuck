@@ -901,6 +901,17 @@
       const pinnedList = document.getElementById('chatHistoryPinned');
       const recentList = document.getElementById('chatHistoryRecent');
       if (!pinnedList || !recentList) return;
+      try {
+        if (Array.isArray(AppState.chatSessions) && typeof AppState.normalizeChatTitle === 'function') {
+          let fixed = false;
+          for (const s of AppState.chatSessions) {
+            if (!s) continue;
+            const next = AppState.normalizeChatTitle(s.title, s, 42);
+            if (next !== (s.title || 'New chat')) { s.title = next; fixed = true; }
+          }
+          if (fixed && typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions();
+        }
+      } catch {}
       pinnedList.innerHTML = '';
       recentList.innerHTML = '';
       const chats = AppState.sortedChats();
@@ -917,7 +928,11 @@
       div.className = `chat-history-item ${s.pinned ? 'pinned' : ''} ${active ? 'active' : ''}`;
       div.dataset.chatId = s.id;
       const updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-      const title = s.title || 'New chat';
+      let title = s.title || 'New chat';
+      try { if (window.AppState && typeof AppState.normalizeChatTitle === 'function') title = AppState.normalizeChatTitle(title, s, 42); } catch {}
+      if (title !== (s.title || 'New chat')) {
+        try { s.title = title; if (AppState && typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions(); } catch {}
+      }
       const pinSvg = s.pinned
         ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>'
         : '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>';
@@ -1016,11 +1031,15 @@
     renameChat(id) {
       const session = AppState.getChat(id);
       if (!session) return;
-      const current = String(session.title || 'New chat');
+      const current = (AppState && typeof AppState.normalizeChatTitle === 'function')
+        ? AppState.normalizeChatTitle(session.title, session, 42)
+        : String(session.title || 'New chat');
       const nextRaw = prompt('Rename chat', current);
       if (nextRaw == null) return;
-      const next = String(nextRaw).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+      let next = String(nextRaw).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
       if (!next) return;
+      if (typeof AppState.normalizeChatTitle === 'function') next = AppState.normalizeChatTitle(next, session, 42);
+      if (!next || next === 'New chat') next = String(nextRaw).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim() || 'New chat';
       AppState.updateChat(id, { title: next });
       this.renderChatHistory();
       Utils.toast('Chat renamed', 'success');

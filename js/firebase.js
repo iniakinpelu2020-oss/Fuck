@@ -67,7 +67,9 @@
         role: m.role || 'user', content: String(m.content == null ? '' : m.content),
         meta: m.meta || '', badges: Array.isArray(m.badges) ? m.badges.slice(0, 20) : [], ts: m.ts || Date.now()
       })).slice(-200) : [];
-      return { id: s.id, title: String(s.title || 'New chat'), messages: msgs, createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned };
+      const base = { id: s.id, title: String(s.title || 'New chat'), messages: msgs, createdAt: s.createdAt || Date.now(), updatedAt: s.updatedAt || Date.now(), pinned: !!s.pinned };
+      try { if (window.AppState && typeof AppState.normalizeChatTitle === 'function') base.title = AppState.normalizeChatTitle(base.title, base, 42); } catch {}
+      return base;
     },
 
     subscribeChats() {
@@ -103,7 +105,9 @@
     },
 
     normalizeChatFromCloud(r) {
-      return { id: r.id, title: String(r.title || 'New chat'), messages: Array.isArray(r.messages) ? r.messages : [], createdAt: this.tsNum(r.createdAt) || Date.now(), updatedAt: this.tsNum(r.updatedAt) || Date.now(), pinned: !!r.pinned };
+      const session = { id: r.id, title: String(r.title || 'New chat'), messages: Array.isArray(r.messages) ? r.messages : [], createdAt: this.tsNum(r.createdAt) || Date.now(), updatedAt: this.tsNum(r.updatedAt) || Date.now(), pinned: !!r.pinned };
+      try { if (window.AppState && typeof AppState.normalizeChatTitle === 'function') session.title = AppState.normalizeChatTitle(session.title, session, 42); } catch {}
+      return session;
     },
     tsNum(v) { if (!v) return 0; if (typeof v === 'number') return v; if (v.seconds) return v.seconds * 1000; if (v.toMillis) try { return v.toMillis(); } catch { return 0; } return Number(v) || 0; },
 

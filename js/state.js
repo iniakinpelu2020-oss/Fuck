@@ -90,6 +90,57 @@ Behavior:
       return /^Hi — I'm Apex\b/.test(c) && c.includes('your autonomous agent');
     },
 
+    isBadChatTitle(title) {
+      try {
+        const t = String(title == null ? '' : title).trim();
+        return !t || t === 'New chat' || /^[{\[]/.test(t);
+      } catch { return true; }
+    },
+
+    getFirstUserMessageText(session) {
+      try {
+        const msgs = session && Array.isArray(session.messages) ? session.messages : [];
+        for (const m of msgs) {
+          if (!m || m.role !== 'user') continue;
+          const text = String(m.content == null ? '' : m.content).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+          if (text) return text;
+        }
+      } catch {}
+      return '';
+    },
+
+    normalizeChatTitle(rawTitle, session, maxLen = 42) {
+      try {
+        let t = rawTitle == null ? '' : rawTitle;
+        let s = (typeof t === 'string') ? t.trim() : String(t == null ? '' : t).trim();
+        if (s.startsWith('{') || s.startsWith('[')) {
+          try {
+            const obj = JSON.parse(s);
+            if (obj && typeof obj === 'object') {
+              const cand = Array.isArray(obj) ? (obj[0] && (obj[0].title || obj[0].name || obj[0].chat_title || obj[0].chatTitle)) : (obj.title || obj.name || obj.chat_title || obj.chatTitle);
+              if (cand != null) s = String(cand).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+            }
+          } catch {}
+        }
+        if (!s || s === 'New chat' || /^[{\[]/.test(s)) {
+          let fromMsg = this.getFirstUserMessageText(session).replace(/^[{\[]+\s*/, '').trim();
+          if (fromMsg.length > maxLen) fromMsg = fromMsg.slice(0, maxLen).trimEnd();
+          return fromMsg || 'New chat';
+        }
+        s = s.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd();
+        return s || 'New chat';
+      } catch { return 'New chat'; }
+    },
+
+    normalizeSessionTitle(session) {
+      if (!session || typeof session !== 'object') return false;
+      const prev = String(session.title == null ? '' : session.title);
+      const next = this.normalizeChatTitle(prev, session, 42);
+      if (next !== prev) { session.title = next; return true; }
+      return false;
+    },
+
     sanitizeChatMessages(msgs) {
       const arr = Array.isArray(msgs) ? msgs : [];
       const out = [];
@@ -143,7 +194,8 @@ Behavior:
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       let changed = false;
       for (const session of this.chatSessions) {
-        if (!session || !Array.isArray(session.messages)) continue;
+        if (!session || typeof session !== 'object') continue;
+        if (!Array.isArray(session.messages)) session.messages = [];
         const filtered = this.sanitizeChatMessages(session.messages);
         if (filtered.length !== session.messages.length) {
           session.messages = filtered;
@@ -151,6 +203,7 @@ Behavior:
         } else {
           for (let i = 0; i < filtered.length; i++) { if (filtered[i] !== session.messages[i]) { session.messages = filtered; changed = true; break; } }
         }
+        if (this.normalizeSessionTitle(session)) changed = true;
       }
       if (changed) {
         try { localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(this.chatSessions || [])); } catch {}
@@ -180,6 +233,7 @@ Behavior:
       if (!Array.isArray(this.chatSessions)) this.chatSessions = [];
       const id = `chat_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const session = { id, title, pinned: false, updatedAt: Date.now(), messages: [] };
+      if (this.normalizeSessionTitle) this.normalizeSessionTitle(session);
       this.chatSessions.unshift(session);
       this.saveActiveChatId(id);
       this.saveChatSessions();
@@ -190,6 +244,7 @@ Behavior:
       const session = this.getChat(id);
       if (!session) return false;
       Object.assign(session, patch, { updatedAt: Date.now() });
+      if (this.normalizeSessionTitle) this.normalizeSessionTitle(session);
       this.saveChatSessions();
       if (window.FirebaseSync && FirebaseSync.user) try { FirebaseSync.pushChat(session); } catch {}
       return true;
