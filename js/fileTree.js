@@ -55,7 +55,8 @@
         parent.children.push({ name: Utils.basename(f.path), path: f.path, type: 'file' });
       }
       const sortRec = (n) => {
-        n.children.sort((a,b) => (a.type===b.type ? a.name.localeCompare(b.name) : a.type==='dir'?-1:1));
+        if (!n || !Array.isArray(n.children)) return;
+        n.children.sort((a,b) => (a.type===b.type ? (a.name||'').localeCompare(b.name||'') : a.type==='dir'?-1:1));
         n.children.forEach(sortRec);
       };
       sortRec(root);

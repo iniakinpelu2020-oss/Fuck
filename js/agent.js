@@ -597,6 +597,17 @@
       try { return decodeURIComponent(escape(atob(String(data)))); } catch { try { return atob(String(data)); } catch { return ''; } }
     },
 
+    attachMessageActions(msgEl, content) {
+      try {
+        if (!msgEl || msgEl.querySelector('.msg-actions')) return;
+        const raw = String(content == null ? '' : content);
+        const footer = document.createElement('div');
+        footer.className = 'msg-actions-footer';
+        footer.innerHTML = (typeof this.renderMessageActions === 'function') ? this.renderMessageActions(raw) : '';
+        msgEl.appendChild(footer);
+      } catch (e) { console.error('[Agent.attachMessageActions]', e); }
+    },
+
     renderMessageActions(rawContent) {
       const enc = this.escapeHtml(this.encodeMsgData(rawContent || ''));
       return `<div class="msg-actions" data-raw-md="${enc}">
@@ -703,7 +714,7 @@
       div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${bodyHtml}${(typeof this.renderBadges === 'function') ? this.renderBadges(badges) : ''}`;
       wrap.appendChild(div);
       try {
-        if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
+        if (role === 'assistant' && !opts.welcomePlaceholder && typeof this.attachMessageActions === 'function') { try { this.attachMessageActions(div, content); } catch (e) { console.error('[Agent.addMessage] attach actions failed', e); } }
       } catch (e) { console.error('[Agent.addMessage] attach actions failed', e); }
       try { wrap.scrollTop = wrap.scrollHeight; } catch {}
 
@@ -787,7 +798,7 @@
           const badgeArr = Array.isArray(badges) ? badges : [];
           if (badgesEl) badgesEl.innerHTML = (typeof Agent.renderBadges === 'function') ? Agent.renderBadges(badgeArr) : '';
           div.classList.remove('streaming');
-          try { Agent.attachMessageActions(div, full); } catch (e) { console.error('[Agent.stream] attach actions failed', e); }
+          try { if (typeof Agent.attachMessageActions === 'function') Agent.attachMessageActions(div, full); } catch (e) { console.error('[Agent.stream] attach actions failed', e); }
           wrap.scrollTop = wrap.scrollHeight;
           if ((opts.persist !== false) && (fopts.persist !== false)) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
           return full;
