@@ -245,9 +245,15 @@
           e.preventDefault(); e.stopPropagation();
           const card = actionBtn.closest('.edit-card');
           const action = actionBtn.getAttribute('data-edit-action');
-          const jsonEl = card ? card.querySelector('.edit-card-json') : null;
           let payload = null;
-          try { payload = jsonEl ? JSON.parse(jsonEl.textContent || '{}') : null; } catch {}
+          try {
+            const raw = card ? (card.getAttribute('data-edit-json') || '') : '';
+            if (raw) payload = JSON.parse(decodeURIComponent(raw));
+          } catch {}
+          if (!payload) {
+            const jsonEl = card ? card.querySelector('.edit-card-json') : null;
+            try { payload = jsonEl ? JSON.parse(jsonEl.textContent || '{}') : null; } catch {}
+          }
           if (!payload || !payload.path) return;
           if (action === 'preview') {
             const body = card ? card.querySelector('.edit-card-body') : null;
@@ -502,7 +508,9 @@
         const preview = content.length > 12000 ? content.slice(0, 12000) + '\n… (truncated preview)' : content;
         const escPath = this.escapeHtml(path);
         const escId = this.escapeHtml(id);
-        return `<div class="edit-card" data-edit-id="${escId}" data-edit-path="${escPath}" data-applied="${wasApplied ? '1' : '0'}">` +
+        let payloadAttr = '';
+        try { payloadAttr = encodeURIComponent(JSON.stringify({ path, content })); } catch { payloadAttr = ''; }
+        return `<div class="edit-card" data-edit-id="${escId}" data-edit-path="${escPath}" data-applied="${wasApplied ? '1' : '0'}" data-edit-json="${this.escapeHtml(payloadAttr)}">` +
           `<div class="edit-card-header" data-edit-toggle="${escId}">` +
             `<div class="edit-card-title"><span class="json-edits-dot"></span><span class="path" title="${escPath}">${escPath}</span></div>` +
             `<div class="flex items-center gap-2">` +
@@ -515,7 +523,6 @@
           `</div>` +
           `<div class="edit-card-body collapsed" id="${escId}"><pre><code class="language-${this.escapeHtml(lang)}">${this.escapeHtml(preview)}</code></pre></div>` +
           `<div class="edit-card-meta">${this.escapeHtml(lang)} · ${content.length} chars</div>` +
-          `<script type="application/json" class="edit-card-json">${this.escapeHtml(JSON.stringify({ path, content }))}</script>` +
         `</div>`;
       }).join('');
       return `<div class="edit-cards">${cards}</div>`;
