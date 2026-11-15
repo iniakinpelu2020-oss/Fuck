@@ -1338,20 +1338,78 @@
       return { value: rawArgs };
     },
 
-    formatToolArgsPreview(args) {
+    formatToolArgsPreview(args, maxLen = 40) {
       if (!args || typeof args !== 'object') return '';
       try {
         const entries = Object.entries(args);
         if (!entries.length) return '';
+        const lim = Math.max(8, Number(maxLen) || 40);
         return entries
           .slice(0, 3)
           .map(([k, v]) => {
-            const val = typeof v === 'string' ? v : JSON.stringify(v);
-            return `${k}: ${val && val.length > 40 ? val.slice(0, 37) + '...' : val}`;
+            let val = '';
+            if (typeof v === 'string') val = v;
+            else {
+              try { val = JSON.stringify(v); } catch { val = String(v == null ? '' : v); }
+            }
+            if (val && val.length > lim) val = val.slice(0, Math.max(1, lim - 3)) + '...';
+            return `${k}: ${val}`;
           })
           .join(', ');
       } catch {
         return '';
+      }
+    },
+
+    formatToolResultForUi(value, maxLen = 280) {
+      try {
+        let text = '';
+        if (value == null) text = '';
+        else if (typeof value === 'string') text = value;
+        else {
+          try { text = JSON.stringify(value); } catch { text = String(value); }
+        }
+        text = String(text || '').replace(/\s+/g, ' ').trim();
+        const lim = Math.max(20, Number(maxLen) || 280);
+        if (text.length > lim) text = text.slice(0, lim - 3) + '...';
+        return text || '(no output)';
+      } catch {
+        try { return String(value == null ? '' : value).slice(0, 280); } catch { return '(unavailable)'; }
+      }
+    },
+
+    formatSearchResults(data) {
+      try {
+        if (!data) return 'No search response.';
+        const toText = (v) => {
+          if (v == null) return '';
+          if (typeof v === 'string') return v;
+          if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+          if (Array.isArray(v)) return v.map(toText).filter(Boolean).join('; ');
+          try { return JSON.stringify(v); } catch { return String(v); }
+        };
+        const errText = toText(data.error);
+        const results = Array.isArray(data.results) ? data.results : [];
+        if (errText && !results.length) {
+          return `Search unavailable: ${errText}`;
+        }
+        const lines = [];
+        const answer = toText(data.answer);
+        if (answer) lines.push(`Answer: ${answer}`);
+        if (!results.length) lines.push('No web results found.');
+        results.slice(0, 6).forEach((r, i) => {
+          const item = (r && typeof r === 'object') ? r : { title: r };
+          const title = toText(item.title || item.name || '(untitled)').trim() || '(untitled)';
+          const url = toText(item.url || item.link || item.href).trim();
+          const snippet = toText(item.content || item.snippet || item.description || item.text).trim();
+          lines.push(`\n[${i + 1}] ${title}`);
+          if (url) lines.push(`Source: ${url}`);
+          if (snippet) lines.push(snippet.slice(0, 500));
+        });
+        if (errText && results.length) lines.push(`\n(note: ${errText})`);
+        return lines.join('\n').trim() || 'No web results found.';
+      } catch (e) {
+        return `Search results formatting error: ${e && e.message ? e.message : e}`;
       }
     },
 
@@ -1864,50 +1922,23 @@
           return { error: this.formatFetchError(null, url, res, t), results: [] };
         }
         const data = await res.json().catch(() => ({}));
-        return data;
+        return (data && typeof data === 'object') ? data : { results: [], raw: data };
       } catch (e) {
         return { error: this.formatFetchError(e, url, null, ''), results: [] };
       }
     },
-    formatSearchResults(data) {
-      if (!data) return 'No search response.';
-      if (data.error && (!data.results || !data.results.length)) {
-        return `Search unavailable: ${data.error}`;
-      }
-      const lines = [];
-      if (data.answer) lines.push(`Answer: ${data.answer}`);
-      const results = Array.isArray(data.results) ? data.results : [];
-      if (!results.length) lines.push('No web results found.');
-      results.slice(0, 6).forEach((r, i) => {
-        lines.push(`\n[${i + 1}] ${r.title || '(untitled)'}`);
-        if (r.url) lines.push(`Source: ${r.url}`);
-        if (r.content) lines.push(String(r.content).slice(0, 500));
-      });
-      if (data.error && results.length) lines.push(`\n(note: ${data.error})`);
-      return lines.join('\n').trim();
-    },
 
     buildActionBadges(execSummary = [], toolNotes = [], applied = [], cmdResults = [], extras = []) {
       const badges = [];
-      // tool/search/automation notes
-      for (const n of (toolNotes || [])) {
-        const s = String(n || '');
-        if (/^Web search/i.test(s)) {
-          const m = s.match(/^Web search(?:\s*\(([^)]+)\))?:\s*(.*)$/i);
-          if (m && m[2] && /\d+\s+result/.test(m[2])) badges.push(`✓ Web search${m[1] ? `: ${m[1]}` : ''}`);
-          else if (m && m[2] && /no results/i.test(m[2])) badges.push(`✓ Web search${m[1] ? `: ${m[1]}` : ''} (no results)`);
-          else if (/^Web search:/i.test(s)) badges.push(`✓ ${s}`);
-          else badges.push('✓ Web search');
-        }
-        else if (/n8n workflow triggered/i.test(s)) badges.push(`✓ n8n workflow`);
-        else if (/Binary analysis/i.test(s)) badges.push(`✓ Binary analyzed`);
-      }
+      // Tool execution status is shown via live progress pills above the message.
+      // Avoid duplicating web-search/tool-execution pills in the message footer badges.
       for (const a of (applied || [])) {
+        if (!a || !a.path) continue;
         badges.push(`${a.created ? '✓ Created' : '✓ Updated'} ${a.path}`);
       }
       for (const r of (cmdResults || [])) {
         if (!r || !r.cmd) continue;
-        const short = r.cmd.length > 42 ? r.cmd.slice(0, 39) + '…' : r.cmd;
+        const short = String(r.cmd).length > 42 ? String(r.cmd).slice(0, 39) + '…' : String(r.cmd);
         if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
         else if (r.remote) badges.push(`✓ Ran remotely: ${short}`);
         else badges.push(`✓ Ran: ${short}`);
@@ -1915,7 +1946,7 @@
       for (const e of (extras || [])) { if (e) badges.push(e); }
       // de-dupe preserving order
       const seen = new Set();
-      return badges.filter(b => { const k = b.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
+      return badges.filter(b => { const k = String(b).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
     },
 
     async runPrompt(prompt, opts = {}) {
@@ -1939,13 +1970,26 @@
         try {
           const data = await this.performWebSearch(prompt);
           const formatted = this.formatSearchResults(data);
-          const ok = Array.isArray(data.results) && data.results.length > 0;
+          const results = Array.isArray(data && data.results) ? data.results : [];
+          const ok = results.length > 0;
+          const errMsg = (data && data.error) ? (typeof data.error === 'string' ? data.error : (this.formatToolResultForUi(data.error, 160) || 'search error')) : '';
           extraContext += `\n\n--- Web Search Results (/api/search) ---\n${formatted}`;
-          toolNotes.push(ok ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${data.results.length} result(s)` : (data.error ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${data.error}` : `Web search${searchPreview ? ` (${searchPreview})` : ''}: no results`));
-          this.updateStatusPill(pill, ok ? `🔍 Searched web${searchPreview ? `: ${searchPreview}` : ''} (${data.results.length} sources)` : `🔍 Web search${searchPreview ? `: ${searchPreview}` : ''}: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
+          toolNotes.push(ok
+            ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${results.length} result(s)`
+            : (errMsg
+              ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${errMsg}`
+              : `Web search${searchPreview ? ` (${searchPreview})` : ''}: no results`));
+          this.updateStatusPill(
+            pill,
+            ok
+              ? `🔍 Searched web${searchPreview ? `: ${searchPreview}` : ''} (${results.length} sources)`
+              : `🔍 Web search${searchPreview ? `: ${searchPreview}` : ''}: ${errMsg || 'no results'}`,
+            ok ? 'done' : 'warn'
+          );
         } catch (e) {
-          toolNotes.push(`Web search${searchPreview ? ` (${searchPreview})` : ''} failed: ${e.message}`);
-          this.updateStatusPill(pill, `🔍 Web search failed: ${e.message}`, 'error');
+          const emsg = (e && e.message) ? e.message : String(e);
+          toolNotes.push(`Web search${searchPreview ? ` (${searchPreview})` : ''} failed: ${emsg}`);
+          this.updateStatusPill(pill, `🔍 Web search failed: ${this.formatToolResultForUi(emsg, 120)}`, 'error');
         }
       }
 
