@@ -879,6 +879,17 @@
       this.ensureActiveChatSession();
       if (window.App && typeof App.setView === 'function') { try { App.setView('agent'); } catch {} }
 
+      // Auto-title new chat sessions from the first user prompt (fallback immediately, refine in background)
+      try {
+        const chatId = window.AppState && AppState.activeChatId;
+        if (chatId && prompt) {
+          const s = AppState.getChat ? AppState.getChat(chatId) : null;
+          if (s && String(s.title || '') === 'New chat') {
+            this.autoTitleChatSession(chatId, prompt);
+          }
+        }
+      } catch {}
+
       // Back-compat: explicit /n8n or "trigger n8n" commands only
       if (this.isExplicitN8nCommand(prompt)) {
         this.setGenerating(true);

@@ -507,12 +507,13 @@ header { height: 42px !important; min-height: 42px; }
 .chat-history-meta { font-size: 9.5px; color: #64748b; margin-left: 0.5rem; white-space: nowrap; }
 .chat-history-actions { display: none; gap: 0.2rem; align-items: center; flex: 0 0 auto; opacity: 0; transition: opacity 120ms ease; }
 .chat-history-item:hover .chat-history-actions, .chat-history-item.active .chat-history-actions { display: flex; opacity: 1; }
-.chat-history-pin, .chat-history-delete {
+.chat-history-pin, .chat-history-delete, .chat-history-rename {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border-radius: 6px; font-size: 11px;
   border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: #94a3b8;
   cursor: pointer; transition: all 120ms ease;
 }
+.chat-history-rename:hover { color: #93c5fd; border-color: rgba(59,130,246,0.35); background: rgba(59,130,246,0.08); }
 .chat-history-pin:hover { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.08); }
 .chat-history-pin.pinned { color: #fde047; border-color: rgba(253,224,71,0.35); background: rgba(253,224,71,0.12); }
 .chat-history-delete:hover { color: #fca5a5; border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.08); }

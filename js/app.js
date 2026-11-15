@@ -796,6 +796,8 @@
           const id = item.dataset.chatId;
           const pinBtn = e.target.closest('.chat-history-pin');
           const delBtn = e.target.closest('.chat-history-delete');
+          const renameBtn = e.target.closest('.chat-history-rename');
+          if (renameBtn) { e.stopPropagation(); this.renameChat(id); return; }
           if (pinBtn) { e.stopPropagation(); this.togglePin(id); return; }
           if (delBtn) { e.stopPropagation(); this.confirmDeleteChat(id); return; }
           this.switchChat(id);
@@ -829,12 +831,14 @@
         ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>'
         : '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3l5 5-2 2-1 5-4 4-1 4-2-2 4-4-4-4 4-4-2-2z"/></svg>';
       const trashSvg = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+      const renameSvg = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
       div.innerHTML = `
         <div class="min-w-0 flex-1 flex flex-col pr-1">
           <span class="chat-history-title">${this.escapeHtml(title)}</span>
           ${updated ? `<span class="chat-history-meta !ml-0">${updated}</span>` : ''}
         </div>
         <div class="chat-history-actions">
+          <button class="chat-history-rename" title="Rename" aria-label="Rename chat">${renameSvg}</button>
           <button class="chat-history-pin ${s.pinned ? 'pinned' : ''}" title="${s.pinned ? 'Unpin' : 'Pin'}" aria-label="${s.pinned ? 'Unpin chat' : 'Pin chat'}">${pinSvg}</button>
           <button class="chat-history-delete" title="Delete" aria-label="Delete chat">${trashSvg}</button>
         </div>
@@ -910,6 +914,19 @@
       const pinned = AppState.togglePin(id);
       this.renderChatHistory();
       Utils.toast(pinned ? 'Pinned' : 'Unpinned', 'info');
+    },
+
+    renameChat(id) {
+      const session = AppState.getChat(id);
+      if (!session) return;
+      const current = String(session.title || 'New chat');
+      const nextRaw = prompt('Rename chat', current);
+      if (nextRaw == null) return;
+      const next = String(nextRaw).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!next) return;
+      AppState.updateChat(id, { title: next });
+      this.renderChatHistory();
+      Utils.toast('Chat renamed', 'success');
     },
 
     confirmDeleteChat(id) {
