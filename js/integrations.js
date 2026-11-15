@@ -122,10 +122,24 @@
     getN8nConfig() {
       const cred = this.getN8nCredential();
       const parsed = this.parseN8nSecret(cred?.secret);
-      const url = (document.getElementById('n8nWebhookUrl')?.value || '').trim() || cred?.url || AppState.settings.webhookUrl || DEFAULT_N8N_WEBHOOK_URL;
-      const headerName = (document.getElementById('n8nAuthHeader')?.value || '').trim() || parsed.headerName || '';
-      const token = (document.getElementById('n8nAuthToken')?.value || '').trim() || parsed.token || '';
-      return { url, headerName, token, credentialName: cred?.name || N8N_CRED_NAME };
+      const saved = (AppState && AppState.settings && typeof AppState.settings === 'object') ? AppState.settings : {};
+      let stored = {};
+      try { stored = (window.Utils && Utils.safeJsonParse) ? (Utils.safeJsonParse(localStorage.getItem('aether.settings.v1'), {}) || {}) : (JSON.parse(localStorage.getItem('aether.settings.v1') || '{}') || {}); } catch {}
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+      const readSaved = (...keys) => {
+        for (const k of keys) {
+          const v = (saved && saved[k] != null) ? saved[k] : stored[k];
+          if (v != null && String(v).trim() !== '') return String(v).trim();
+        }
+        return '';
+      };
+      const savedUrl = readSaved('webhookUrl', 'n8nWebhookUrl');
+      const savedHeaderName = readSaved('authHeaderName', 'n8nAuthHeaderName', 'n8nAuthHeader');
+      const savedHeaderValue = readSaved('authHeaderValue', 'n8nAuthHeaderValue', 'n8nAuthToken', 'authToken');
+      const url = savedUrl || (document.getElementById('n8nWebhookUrl')?.value || '').trim() || cred?.url || DEFAULT_N8N_WEBHOOK_URL;
+      const headerName = savedHeaderName || (document.getElementById('n8nAuthHeader')?.value || '').trim() || parsed.headerName || '';
+      const token = savedHeaderValue || (document.getElementById('n8nAuthToken')?.value || '').trim() || parsed.token || '';
+      return { url, headerName, token, authHeaderName: headerName, authHeaderValue: token, credentialName: cred?.name || N8N_CRED_NAME };
     },
 
     saveN8nConfigFromUI() {
@@ -140,6 +154,9 @@
       if (idx >= 0) AppState.vault[idx] = item; else AppState.vault.unshift(item);
       AppState.saveVault();
       AppState.settings.webhookUrl = url;
+      AppState.settings.n8nWebhookUrl = url;
+      AppState.settings.authHeaderName = headerName;
+      AppState.settings.authHeaderValue = token;
       AppState.saveSettings();
       const sw = document.getElementById('settingWebhookUrl'); if (sw) sw.value = url;
       this.render();
@@ -153,18 +170,32 @@
       const urlEl = document.getElementById('n8nWebhookUrl');
       const hEl = document.getElementById('n8nAuthHeader');
       const tEl = document.getElementById('n8nAuthToken');
-      const fallbackUrl = cred?.url || AppState.settings.webhookUrl || DEFAULT_N8N_WEBHOOK_URL;
+      const saved = (AppState && AppState.settings && typeof AppState.settings === 'object') ? AppState.settings : {};
+      let stored = {};
+      try { stored = (window.Utils && Utils.safeJsonParse) ? (Utils.safeJsonParse(localStorage.getItem('aether.settings.v1'), {}) || {}) : (JSON.parse(localStorage.getItem('aether.settings.v1') || '{}') || {}); } catch {}
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+      const readSaved = (...keys) => {
+        for (const k of keys) {
+          const v = (saved && saved[k] != null) ? saved[k] : stored[k];
+          if (v != null && String(v).trim() !== '') return String(v).trim();
+        }
+        return '';
+      };
+      const fallbackUrl = readSaved('webhookUrl', 'n8nWebhookUrl') || cred?.url || DEFAULT_N8N_WEBHOOK_URL;
+      const fallbackHeader = readSaved('authHeaderName', 'n8nAuthHeaderName', 'n8nAuthHeader') || parsed.headerName || '';
+      const fallbackToken = readSaved('authHeaderValue', 'n8nAuthHeaderValue', 'n8nAuthToken', 'authToken') || parsed.token || '';
       if (urlEl) {
         if (!urlEl.value) urlEl.value = fallbackUrl;
         if (!String(urlEl.value || '').trim()) urlEl.value = DEFAULT_N8N_WEBHOOK_URL;
       }
-      if (hEl && !hEl.value) hEl.value = parsed.headerName || '';
-      if (tEl && !tEl.value) tEl.value = parsed.token || '';
-      // ensure settings reflect pre-configured default for fresh loads
-      if (!String(AppState.settings.webhookUrl || '').trim()) {
-        AppState.settings.webhookUrl = DEFAULT_N8N_WEBHOOK_URL;
-        try { AppState.saveSettings(); } catch {}
-      }
+      if (hEl && !hEl.value) hEl.value = fallbackHeader;
+      if (tEl && !tEl.value) tEl.value = fallbackToken;
+      // ensure settings reflect saved/pre-configured values for headless agent use
+      if (!String(AppState.settings.webhookUrl || '').trim()) AppState.settings.webhookUrl = fallbackUrl || DEFAULT_N8N_WEBHOOK_URL;
+      if (!String(AppState.settings.n8nWebhookUrl || '').trim()) AppState.settings.n8nWebhookUrl = AppState.settings.webhookUrl;
+      if (AppState.settings.authHeaderName == null && fallbackHeader) AppState.settings.authHeaderName = fallbackHeader;
+      if (AppState.settings.authHeaderValue == null && fallbackToken) AppState.settings.authHeaderValue = fallbackToken;
+      try { AppState.saveSettings(); } catch {}
     },
 
     renderN8nStatus(state = {}) {
@@ -286,24 +317,43 @@
           return payload;
         },
         async trigger(event = 'manual', data = {}, options = {}) {
-          const cfg = this.getConfig();
-          const url = (options.url || cfg.url || DEFAULT_N8N_WEBHOOK_URL || '').trim();
+          const cfg = (typeof this.getConfig === 'function') ? (this.getConfig() || {}) : {};
+          const saved = (window.AppState && AppState.settings && typeof AppState.settings === 'object') ? AppState.settings : {};
+          let stored = {};
+          try { stored = (window.Utils && Utils.safeJsonParse) ? (Utils.safeJsonParse(localStorage.getItem('aether.settings.v1'), {}) || {}) : (JSON.parse(localStorage.getItem('aether.settings.v1') || '{}') || {}); } catch {}
+          if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+          const readSaved = (...keys) => {
+            for (const k of keys) {
+              const v = (saved && saved[k] != null) ? saved[k] : stored[k];
+              if (v != null && String(v).trim() !== '') return String(v).trim();
+            }
+            return '';
+          };
+          const savedUrl = readSaved('webhookUrl', 'n8nWebhookUrl');
+          const savedHeaderName = readSaved('authHeaderName', 'n8nAuthHeaderName', 'n8nAuthHeader');
+          const savedHeaderValue = readSaved('authHeaderValue', 'n8nAuthHeaderValue', 'n8nAuthToken', 'authToken');
+          const url = (options.url || savedUrl || cfg.url || DEFAULT_N8N_WEBHOOK_URL || '').trim();
           if (!url) {
             const err = new Error('No n8n webhook URL configured. Save an n8n config in the Vault/Integrations tab.');
             this.notify({ status: 'error', httpStatus: null, url: '', body: err.message, event, at: new Date().toISOString() });
             throw err;
           }
           const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
-          const headerName = (options.authHeaderName != null ? options.authHeaderName : cfg.headerName || '').trim();
-          const token = (options.authToken != null ? options.authToken : cfg.token || '').trim();
+          const headerName = (options.authHeaderName != null ? options.authHeaderName : (savedHeaderName || cfg.headerName || cfg.authHeaderName || '')).trim();
+          const token = (options.authToken != null ? options.authToken : (options.authHeaderValue != null ? options.authHeaderValue : (savedHeaderValue || cfg.token || cfg.authHeaderValue || ''))).toString().trim();
           if (headerName && token) headers[headerName] = token;
           else if (token && !headers.Authorization && /^bearer\s|^basic\s/i.test(token)) headers.Authorization = token;
 
           const payload = options.payload !== undefined ? options.payload : this.buildPayload(event, data);
           // Enforce requested n8n payload contract for the webhook POST body
+          const taskData = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data } : (data != null ? { value: data } : {});
           const reqObj = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? { ...payload } : { payload };
           if (reqObj.event == null || reqObj.event === '') reqObj.event = event || 'manual';
-          if (!Object.prototype.hasOwnProperty.call(reqObj, 'payload')) reqObj.payload = (data && typeof data === 'object') ? data : (data ?? null);
+          if (!Object.prototype.hasOwnProperty.call(reqObj, 'payload')) reqObj.payload = taskData;
+          if (!reqObj.task) reqObj.task = taskData;
+          if (!reqObj.data) reqObj.data = taskData;
+          if (!reqObj.message && typeof taskData.message === 'string') reqObj.message = taskData.message;
+          if (!reqObj.prompt && typeof taskData.prompt === 'string') reqObj.prompt = taskData.prompt;
           if (!reqObj.source) reqObj.source = 'apex-ide';
           if (!reqObj.timestamp) reqObj.timestamp = new Date().toISOString();
           const reqBody = typeof options.payload === 'string' ? options.payload : JSON.stringify(reqObj);

@@ -820,31 +820,72 @@
       }
     },
 
+    getSavedN8nConfig() {
+      try {
+        const saved = (AppState && AppState.settings && typeof AppState.settings === 'object') ? AppState.settings : {};
+        let stored = {};
+        try { stored = Utils.safeJsonParse(localStorage.getItem('aether.settings.v1'), {}) || {}; } catch {}
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+        const readSaved = (...keys) => {
+          for (const k of keys) {
+            const v = (saved && saved[k] != null) ? saved[k] : stored[k];
+            if (v != null && String(v).trim() !== '') return String(v).trim();
+          }
+          return '';
+        };
+        let credUrl = '', credHeaderName = '', credToken = '';
+        try {
+          const cred = (window.Integrations && typeof Integrations.getN8nCredential === 'function') ? Integrations.getN8nCredential() : null;
+          if (cred) {
+            credUrl = String(cred.url || '').trim();
+            const parsed = (typeof Integrations.parseN8nSecret === 'function') ? (Integrations.parseN8nSecret(cred.secret) || {}) : {};
+            credHeaderName = String(parsed.headerName || '').trim();
+            credToken = String(parsed.token || '').trim();
+          }
+        } catch {}
+        const url = readSaved('webhookUrl', 'n8nWebhookUrl') || credUrl || ((window.ApexWorkflowBridge || window.AetherWorkflowBridge) && typeof (window.ApexWorkflowBridge || window.AetherWorkflowBridge).getWebhookUrl === 'function' ? String((window.ApexWorkflowBridge || window.AetherWorkflowBridge).getWebhookUrl() || '').trim() : '');
+        const authHeaderName = readSaved('authHeaderName', 'n8nAuthHeaderName', 'n8nAuthHeader') || credHeaderName || '';
+        const authHeaderValue = readSaved('authHeaderValue', 'n8nAuthHeaderValue', 'n8nAuthToken', 'authToken') || credToken || '';
+        return { url, authHeaderName, authHeaderValue };
+      } catch { return { url: '', authHeaderName: '', authHeaderValue: '' }; }
+    },
+
     async triggerN8n(message, extra = {}, opts = {}) {
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
       if (!bridge || typeof bridge.trigger !== 'function') {
         if (opts.showErrors !== false) this.addMessage('assistant', 'n8n webhook is not configured. Add it in Settings (⚙️).', 'n8n');
         return { ok: false, error: 'not_configured' };
       }
-      const url = typeof bridge.getWebhookUrl === 'function' ? bridge.getWebhookUrl() : '';
+      const cfg = this.getSavedN8nConfig();
+      const url = String(cfg.url || '').trim();
       if (!url) {
         if (opts.showErrors !== false) this.addMessage('assistant', 'n8n webhook URL is not set. Configure it in Settings (⚙️).', 'n8n');
         return { ok: false, error: 'not_configured' };
       }
       if (opts.showUser) this.addMessage('user', message, 'n8n');
       const sessionId = `apex_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const safeMsg = String(message == null ? '' : message).trim() || 'Run automation task';
       const payload = {
-        message,
+        task: safeMsg,
+        instruction: safeMsg,
+        message: safeMsg,
+        prompt: safeMsg,
         session_id: sessionId,
         user_id: 'apex-user',
         source: 'apex-agent',
-        prompt: message,
-        workspace: AppState.workspaceName || null,
-        activeFile: AppState.activeFilePath || null,
-        ...extra
+        workspace: (window.AppState && AppState.workspaceName) || null,
+        activeFile: (window.AppState && AppState.activeFilePath) || null,
+        timestamp: new Date().toISOString(),
+        ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {})
       };
       try {
-        const res = await bridge.trigger('agent_chat', payload, { source: opts.source || 'agent-chat' });
+        const res = await bridge.trigger('agent_automation', payload, {
+          source: opts.source || 'agent-chat',
+          url,
+          authHeaderName: cfg.authHeaderName,
+          authHeaderValue: cfg.authHeaderValue,
+          authToken: cfg.authHeaderValue
+        });
         return { ok: true, result: res };
       } catch (e) {
         return { ok: false, error: e.message || String(e) };
@@ -1461,32 +1502,32 @@
       if (!p) return false;
       if (this.isExplicitN8nCommand(p)) return true;
       const lower = p.toLowerCase();
-      // Require explicit intent to run/trigger an n8n automation/workflow.
-      // Never auto-trigger on greetings or normal code/binary questions.
+      // Require explicit intent to run/trigger an automation/workflow (uses saved n8n config; no chat URL/payload needed).
       const mentionsN8n = /\bn8n\b|\bn\s*8\s*n\b/.test(lower);
-      const actionVerb = /\b(run|trigger|execute|start|launch|fire|invoke|dispatch|kick\s*off|test|activate)\b/.test(lower);
+      const actionVerb = /\b(run|trigger|execute|start|launch|fire|invoke|dispatch|kick\s*off|test|activate|send)\b/.test(lower);
       const workflowWord = /\bworkflow(s)?\b|\bautomation(s)?\b|\bwebhook\b/.test(lower);
       if (!actionVerb) return false;
       if (!mentionsN8n && !workflowWord) return false;
-      // Must clearly refer to n8n automation/workflow execution
-      const explicitN8nTarget = mentionsN8n || /\bn8n\b/.test(lower);
-      if (!explicitN8nTarget) return false;
+      // Must clearly refer to running a configured automation/workflow (n8n mention OR "my/the ... workflow/automation")
+      const explicitTarget = mentionsN8n || /\b(my|the|our|saved|configured)\b[^\n]{0,40}\b(workflow|automation|webhook)s?\b/.test(lower) || /\b(workflow|automation|webhook)s?\b[^\n]{0,20}\b(now|for me)\b/.test(lower);
+      if (!explicitTarget) return false;
 
       // Exclude questions/how-to/explanations/coding requests unless clearly asking to run it now
-      const asksToRunNow = /\b(now|right now|for me|please run|please trigger|please execute|please start|go ahead and run|go ahead and trigger)\b/.test(lower);
+      const asksToRunNow = /\b(now|right now|for me|please run|please trigger|please execute|please start|go ahead and run|go ahead and trigger|run it|trigger it|start it)\b/.test(lower);
       const isInformational = /^\s*(what|how|why|when|where|who|which|explain|describe|help me understand|tell me about|can you explain|could you explain|difference between|compare)\b/i.test(p);
-      const isAuthoringRequest = /^\s*(write|create|build|make|generate|code|implement|add|fix|debug|refactor|update|modify|review|analyze|inspect|scan)\b/i.test(p);
+      const isAuthoringRequest = /^\s*(write|create|build|make|generate|code|implement|add|fix|debug|refactor|update|modify|review|analyze|inspect|scan|design|set up|configure)\b/i.test(p);
       if ((isInformational || isAuthoringRequest) && !asksToRunNow) return false;
 
-      // Simple greetings/chit-chat safety (e.g. "hello run n8n?" unlikely, but be safe)
+      // Simple greetings/chit-chat safety
       if (/^\s*(hi|hello|hey|yo|thanks|thank you|ok|okay)[!.,\s]*$/i.test(p)) return false;
 
       return true;
     },
     shouldN8n(prompt) {
-      if (this.isExplicitN8nCommand(prompt)) return true;
-      const hasConfig = !!((window.ApexWorkflowBridge && ApexWorkflowBridge.getWebhookUrl && ApexWorkflowBridge.getWebhookUrl()) || (AppState.settings && AppState.settings.webhookUrl));
+      const cfg = (typeof this.getSavedN8nConfig === 'function') ? this.getSavedN8nConfig() : {};
+      const hasConfig = !!String(cfg.url || (AppState && AppState.settings && AppState.settings.webhookUrl) || '').trim();
       if (!hasConfig) return false;
+      if (this.isExplicitN8nCommand(prompt)) return true;
       return this.hasExplicitN8nIntent(prompt);
     },
     shouldBinaryAnalyze(prompt) {
