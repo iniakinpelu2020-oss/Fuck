@@ -446,16 +446,19 @@
           return ok;
         }
 
-        // Managed Workers AI presets route through /api/chat
+        // Managed Workers AI presets route through /api/chat; health ping /api/models or /v1/models
         let ok = false;
-        let title = 'Managed endpoint reachable (/api/chat)';
-        try {
-          const res = await fetch('/api/chat', { method: 'GET', cache: 'no-store' });
-          ok = res.ok;
-          if (!res.ok) title = `Managed endpoint responded with HTTP ${res.status} (/api/chat)`;
-        } catch (e) {
-          ok = false;
-          title = `Managed endpoint unreachable (/api/chat): ${String((e && e.message) || e || 'network error')}`;
+        let title = 'Managed endpoint reachable';
+        const candidates = ['/api/models', '/v1/models'];
+        for (const path of candidates) {
+          try {
+            const res = await fetch(path, { method: 'GET', cache: 'no-store' });
+            if (res.status === 200) { ok = true; title = `Managed endpoint reachable (${path})`; break; }
+            if (res.ok) { ok = true; title = `Managed endpoint reachable (${path})`; break; }
+            title = `Managed endpoint responded with HTTP ${res.status} (${path})`;
+          } catch (e) {
+            title = `Managed endpoint unreachable (${path}): ${String((e && e.message) || e || 'network error')}`;
+          }
         }
         this.setHeaderStatus(ok ? 'ok' : 'bad', title);
         return ok;

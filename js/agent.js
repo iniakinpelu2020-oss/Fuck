@@ -648,9 +648,10 @@
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
       const mode = (opts && opts.mode) || this.getAgentMode();
-      const rendered = (role === 'assistant') ? this.renderMessageContent(content, { mode, applied: opts.applied || [] }) : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
-      const contentWrap = (role === 'assistant') ? `<div class="chat-content">${rendered}</div>` : rendered;
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${contentWrap}${this.renderBadges(badges)}`;
+      const bodyHtml = (role === 'assistant')
+        ? `<div class="chat-content">${this.renderMessageContent(content, { mode, applied: opts.applied || [] })}</div>`
+        : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div>${bodyHtml}${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       if (role === 'assistant' && !opts.welcomePlaceholder) this.attachMessageActions(div, content);
       wrap.scrollTop = wrap.scrollHeight;
@@ -690,7 +691,7 @@
       const div = document.createElement('div');
       div.className = 'chat-msg assistant streaming';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      div.innerHTML = `<div class="meta"><span class="msg-avatar msg-avatar-agent">A</span><span>Agent</span>${metaHtml}</div><pre class="chat-content"><span class="thinking-inline"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="thinking-label">Thinking...</span></span></pre><div class="chat-badges"></div>`;
+      div.innerHTML = `<div class="meta"><span class="msg-avatar msg-avatar-agent">A</span><span>Agent</span>${metaHtml}</div><div class="chat-content"><pre class="chat-content"><span class="thinking-inline"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="thinking-label">Thinking...</span></span></pre></div><div class="chat-badges"></div>`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
       const contentEl = div.querySelector('.chat-content');
@@ -698,33 +699,37 @@
       let text = '';
       let started = false;
       let finalized = false;
+      const bubbleMode = (opts && opts.mode) || this.getAgentMode();
       return {
         el: div,
         append(delta) {
           if (!delta) return;
-          if (!started) { started = true; contentEl.textContent = ''; }
+          if (!started) { started = true; contentEl.innerHTML = '<pre class="chat-content"></pre>'; }
           text += delta;
-          contentEl.textContent = Agent.streamDisplayText(text);
+          const pre = contentEl.querySelector('pre.chat-content') || contentEl;
+          if (pre && pre.tagName === 'PRE') pre.textContent = Agent.streamDisplayText(text);
+          else contentEl.textContent = Agent.streamDisplayText(text);
           wrap.scrollTop = wrap.scrollHeight;
         },
         setError(msg) {
           text = String(msg || 'Error');
-          contentEl.textContent = text;
+          contentEl.innerHTML = `<pre class="chat-content">${Agent.escapeHtml(text)}</pre>`;
           div.classList.remove('streaming');
           wrap.scrollTop = wrap.scrollHeight;
         },
         getText() { return text; },
-        finalize(displayText = null, badges = []) {
+        finalize(displayText = null, badges = [], fopts = {}) {
           if (finalized) return (displayText != null ? String(displayText) : text);
           finalized = true;
           const full = (displayText != null ? String(displayText) : text);
-          contentEl.innerHTML = Agent.renderMessageContent(full);
+          const mode = (fopts && fopts.mode) || bubbleMode || Agent.getAgentMode();
+          contentEl.innerHTML = Agent.renderMessageContent(full, { mode, applied: (fopts && fopts.applied) || [] });
           const badgeArr = Array.isArray(badges) ? badges : [];
           if (badgesEl) badgesEl.innerHTML = Agent.renderBadges(badgeArr);
           div.classList.remove('streaming');
           Agent.attachMessageActions(div, full);
           wrap.scrollTop = wrap.scrollHeight;
-          if (opts.persist !== false) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
+          if ((opts.persist !== false) && (fopts.persist !== false)) Agent.persistMessage('assistant', full, meta || 'chat', badgeArr);
           return full;
         }
       };
