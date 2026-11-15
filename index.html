@@ -314,14 +314,18 @@
                   <input id="chatFileInput" type="file" multiple accept="*/*" class="hidden" />
                 </div>
                 <div class="composer-toolbar flex items-center justify-between gap-2 mt-2 px-0.5">
-                  <div class="flex items-center gap-2 min-w-0">
+                  <div class="flex items-center gap-2 min-w-0 flex-wrap">
                     <label class="sr-only" for="agentModeSelect">Mode</label>
                     <select id="agentModeSelect" class="input input-compact composer-mode-select" title="Response mode" aria-label="Response mode">
                       <option value="chat">Chat</option>
                       <option value="agent" selected>Agent</option>
                       <option value="edit">Edit</option>
                     </select>
-                    <span class="text-[10px] text-slate-500 hidden sm:inline">Chat: markdown replies · Agent/Edit: workspace edits</span>
+                    <label class="inline-flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer select-none" title="Include workspace files/context in the prompt">
+                      <input id="agentAttachWorkspaceContext" type="checkbox" class="accent-accent w-3.5 h-3.5" />
+                      <span>Attach Workspace Context</span>
+                    </label>
+                    <span class="text-[10px] text-slate-500 hidden sm:inline">Chat: natural replies · Agent/Edit: workspace edits</span>
                   </div>
                 </div>
                 <div class="hidden" aria-hidden="true">

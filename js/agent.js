@@ -357,19 +357,21 @@
     getEffectiveSystemPrompt(mode) {
       const m = mode || this.getAgentMode();
       const base = String((window.AppState && AppState.settings && AppState.settings.systemPrompt) || '').trim();
+      const collab = '\n\nCollaborate like a sharp human teammate. For casual greetings or general questions, reply naturally and directly; do not summarize workspace files, starter files, or project state unless the user asks about them or relevant context is explicitly provided.';
       const mcpInstr = '\n\n--- Autonomous MCP tool calling ---\n' +
         'When you need to use an MCP tool, emit either (1) native OpenAI-compatible tool_calls, (2) a fenced ```json:mcp``` block, or (3) a raw JSON object {"name":"mcp__<server>__<tool>","arguments":{...}}. ' +
         'The runtime intercepts it, executes via MCPClient.callTool(server, tool, args), renders a compact tool-execution status pill, appends the tool result to conversation history, and continues your turn automatically (up to 5 tool hops) until you produce a final plain-English response. Do not repeat the same tool call unnecessarily.';
       if (m === 'chat') {
-        return base + mcpInstr + '\n\n--- Response Mode: Chat ---\n' +
+        return base + collab + mcpInstr + '\n\n--- Response Mode: Chat ---\n' +
           'Reply in clear, helpful plain English. Use standard fenced Markdown code blocks (```language ... ```). ' +
           'Do NOT emit ```json:edits``` blocks and do not claim to have modified files or run commands unless results are explicitly provided in context. ' +
           'If the user asks for code changes, provide the code in normal Markdown fenced blocks with explanations.';
       }
-      return base + mcpInstr + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
+      return base + collab + mcpInstr + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
         'When you need to create, update, or modify workspace files, return a fenced ```json:edits``` block with this shape:\n' +
         '{"edits":[{"path":"relative/path","content":"new full file content"}],"terminal":[{"command":"..."}],"notes":"short summary"}\n' +
-        'Prefer precise, minimal edits. If no edits are needed, use an empty edits array or omit the block. Keep user-facing prose clean; the UI will present file changes as structured cards.';
+        'Prefer precise, minimal edits. If no edits are needed, use an empty edits array or omit the block. Keep user-facing prose clean; the UI will present file changes as structured cards.\n' +
+        'Workspace context may be partial: you receive file names by default and file contents only when relevant or explicitly requested/attached. If you need to inspect or modify a file not shown in context, read it via available tools/runtime capabilities before making assumptions.';
     },
 
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
@@ -1353,6 +1355,11 @@
       }
     },
 
+    serializeToolArgs(v) {
+      if (typeof v === 'string') return v;
+      try { return JSON.stringify(v == null ? {} : v); } catch { return '{}'; }
+    },
+
     buildRequestBody(provider, model, system, userContentOrMessages, opts = {}) {
       // Accepts a plain prompt string (legacy) or a full messages array (native tool loop)
       const configuredMax = Number(opts.max_tokens || opts.maxTokens || (AppState && AppState.settings && (AppState.settings.maxTokens || AppState.settings.max_tokens)) || 4096) || 4096;
@@ -1648,11 +1655,101 @@
       throw lastError || new Error(`All API attempts failed (endpoint: ${endpoint}).`);
     },
 
-    collectWorkspaceSummary() {
-      const active = AppState.getActiveFile();
-      let out = `Workspace: ${AppState.workspaceName}\nActive file: ${AppState.activeFilePath || '(none)'}\nFiles (${AppState.files.size} total):\n`;
-      out += [...AppState.files.keys()].slice(0, 80).map(p => `- ${p}`).join('\n');
-      if (active) out += `\n\n--- Active File Content (${active.path}) ---\n${String(active.content || '').slice(0, 8000)}`;
+    collectWorkspaceSummary(prompt = '', opts = {}) {
+      const mode = String(opts.mode || this.getAgentMode() || 'agent').toLowerCase();
+      const attach = !!(opts.attachWorkspaceContext ?? (AppState && AppState.settings && AppState.settings.attachWorkspaceContext));
+      const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
+      const hasAttachments = attachments.length > 0;
+      const starterPaths = new Set(['src/index.js', 'notes.txt']);
+      const files = (AppState && AppState.files instanceof Map) ? [...AppState.files.keys()].sort() : [];
+      const active = (AppState && typeof AppState.getActiveFile === 'function') ? AppState.getActiveFile() : null;
+      const wsName = (AppState && AppState.workspaceName) || 'Workspace';
+      const text = String(prompt == null ? '' : prompt);
+      const lower = text.toLowerCase();
+
+      const norm = (p) => String(p || '').replace(/^\/+/, '').trim();
+      const mentionsPath = (p) => {
+        const path = norm(p);
+        if (!path) return false;
+        const pathLower = path.toLowerCase();
+        if (lower.includes(pathLower)) return true;
+        const base = path.split('/').pop();
+        if (base && lower.includes(String(base).toLowerCase())) return true;
+        return false;
+      };
+
+      const anyMentioned = files.filter(mentionsPath);
+      const activePath = active && active.path ? norm(active.path) : '';
+      const mentionsActiveRef = /\b(active file|current file|this file|open file|selected file|in editor|the file i('?m| am)? (in|editing|viewing))\b/i.test(text);
+      const mentionsActive = !!(activePath && (mentionsPath(activePath) || mentionsActiveRef));
+      const inspectEditIntent = /\b(inspect|read|open|show|view|see|look at|check|review|explain|describe|summari[sz]e|what('?s| is) in|contents?|inside|print|cat|edit|modify|update|change|fix|refactor|rewrite|rename|implement|add|remove|delete|create|write|append|debug|test|run|build|diff|compare)\b/i.test(text);
+      const asksAboutWorkspace = /\b(what files|which files|list files|show files|file tree|project files|workspace files|project structure|workspace structure|what('?s| is) in (this|the|my) (project|workspace|repo|folder|directory)|what do i have|what's here)\b/i.test(text);
+
+      // Chat mode: no starter/default file contents unless explicitly mentioned or Attach Workspace Context is on.
+      // For casual/general questions without file/code mentions, do not dump workspace contents.
+      if (mode === 'chat' && !attach && !hasAttachments && anyMentioned.length === 0 && !mentionsActive) {
+        if (!asksAboutWorkspace) return '';
+        const treeOnly = files.slice(0, 120).map(p => `- ${p}`).join('\n');
+        let outTree = `Workspace: ${wsName}\nActive file: ${activePath || '(none)'}\nFiles (${files.length} total):\n${treeOnly || '- (empty)'}`;
+        if (files.length > 120) outTree += `\n- ... (${files.length - 120} more)`;
+        return outTree;
+      }
+
+      // File tree (names only)
+      const tree = files.slice(0, 120).map(p => `- ${p}`).join('\n');
+      let out = `Workspace: ${wsName}\nActive file: ${activePath || '(none)'}\nFiles (${files.length} total):\n${tree || '- (empty)'}`;
+      if (files.length > 120) out += `\n- ... (${files.length - 120} more)`;
+
+      const includeContentFor = new Set();
+      const canIncludePath = (p) => {
+        const path = norm(p);
+        if (!path) return false;
+        const f = AppState.files.get(path);
+        if (!f) return false;
+        const isStarter = starterPaths.has(path);
+        const mentioned = mentionsPath(path) || (path === activePath && mentionsActive);
+        if (attach) return true; // explicit toggle opt-in
+        if (mode === 'chat') {
+          // include contents only when file is explicitly mentioned
+          return mentioned;
+        }
+        // Agent/Edit: only inject file tree by default; include contents only when user asks to inspect/edit them
+        if (mentioned) return inspectEditIntent || asksAboutWorkspace || mentionsActiveRef;
+        return false;
+      };
+
+      // In chat mode with explicit attach toggle, include active file content (even starter) for convenience
+      if (attach && activePath && AppState.files.has(activePath)) includeContentFor.add(activePath);
+      // Active file: in agent/edit only when relevant; in chat only when mentioned/toggle (toggle handled above)
+      if (!includeContentFor.has(activePath) && activePath) {
+        if (mode === 'chat') {
+          if ((mentionsPath(activePath) || mentionsActiveRef) && canIncludePath(activePath)) includeContentFor.add(activePath);
+        } else {
+          // agent/edit: no auto-dump of active/starter content unless asked to inspect/edit
+          if (canIncludePath(activePath)) includeContentFor.add(activePath);
+        }
+      }
+
+      // Explicitly mentioned files
+      for (const p of anyMentioned.slice(0, 6)) {
+        if (!p || includeContentFor.has(p)) continue;
+        if (canIncludePath(p)) includeContentFor.add(p);
+      }
+
+      if (includeContentFor.size) {
+        for (const p of includeContentFor) {
+          const f = AppState.files.get(p);
+          if (!f) continue;
+          const content = String(f.content == null ? '' : f.content);
+          if (f.binary) {
+            const summary = String((f.meta && (f.meta.summary || f.meta.report)) || content || '[binary file]').slice(0, 4000);
+            out += `\n\n--- File Summary (${p}) ---\n${summary}`;
+          } else {
+            out += `\n\n--- File Content (${p}) ---\n${content.slice(0, 8000)}`;
+          }
+        }
+      }
+
       return out;
     },
 
@@ -1842,11 +1939,15 @@
         }
       }
 
-      let contextBlock = this.collectWorkspaceSummary();
+      let contextBlock = this.collectWorkspaceSummary(prompt, {
+        mode: this.getAgentMode(),
+        attachments,
+        attachWorkspaceContext: !!(AppState && AppState.settings && AppState.settings.attachWorkspaceContext)
+      });
       const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
       if (attachments.length && window.Workspace && typeof Workspace.buildAgentAttachmentContext === 'function') {
         const attText = Workspace.buildAgentAttachmentContext(attachments);
-        if (attText) contextBlock += `\n\n${attText}`;
+        if (attText) contextBlock = contextBlock ? (contextBlock + `\n\n${attText}`) : attText;
       }
       if (attachments.length) execSummary.push(`Attached ${attachments.length} file${attachments.length === 1 ? '' : 's'}`);
 
@@ -1912,7 +2013,10 @@
 
       contextBlock += extraContext;
       const system = AppState.settings.systemPrompt || '';
-      const userPayload = `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextBlock}`;
+      const contextSection = String(contextBlock || '').trim();
+      const userPayload = contextSection
+        ? `${prompt}\n\n=== WORKSPACE & TOOL CONTEXT ===\n${contextSection}`
+        : String(prompt || '');
 
       // 2) LLM call with dynamic MCP tool schema; handle tool_calls loop (routed to MCP JSON-RPC tools/call)
       let answer = '';
