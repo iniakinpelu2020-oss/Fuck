@@ -217,6 +217,41 @@ select.input { padding-right: 1.8rem; }
 .msg-avatar { width:18px;height:18px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;flex:0 0 auto; }
 .msg-avatar-user { background: rgba(59,130,246,0.35); }
 .msg-avatar-agent { background: rgba(16,185,129,0.22); color:#6ee7b7; border:1px solid rgba(16,185,129,0.25); }
+/* Markdown/fenced code blocks */
+.chat-md { font-size: 12.5px; line-height: 1.65; color: #e2e8f0; white-space: normal; word-break: break-word; }
+.chat-md p { margin: 0.2rem 0 0.55rem; }
+.chat-md p:last-child { margin-bottom: 0.15rem; }
+.chat-md ul, .chat-md ol { margin: 0.25rem 0 0.6rem 1.2rem; padding: 0; }
+.chat-md li { margin: 0.15rem 0; }
+.chat-md h1,.chat-md h2,.chat-md h3,.chat-md h4 { color:#fff; font-weight:600; margin:0.5rem 0 0.3rem; line-height:1.3; }
+.chat-md h1{font-size:1.05rem}.chat-md h2{font-size:0.98rem}.chat-md h3{font-size:0.92rem}
+.chat-md code.inline-code { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:0.92em; background:rgba(255,255,255,0.06); border:1px solid var(--border); border-radius:5px; padding:0.05rem 0.3rem; color:#e5e7eb; }
+.chat-md a { color:#93c5fd; text-decoration: underline; text-underline-offset: 2px; }
+.chat-md blockquote { margin:0.35rem 0; padding:0.2rem 0.6rem; border-left:2px solid rgba(99,102,241,0.45); color:#cbd5e1; background:rgba(255,255,255,0.02); border-radius:0 6px 6px 0; }
+.code-card { margin: 0.5rem 0; border: 1px solid var(--border); border-radius: 10px; background: #0b0f17; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,0.02); }
+.code-card-bar { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; padding:0.3rem 0.45rem 0.3rem 0.6rem; background: rgba(255,255,255,0.03); border-bottom:1px solid var(--border); }
+.code-card-lang { font-size:10px; font-weight:600; letter-spacing:0.02em; text-transform:lowercase; color:#94a3b8; font-family:"JetBrains Mono",ui-monospace,monospace; }
+.code-copy-btn { font-size:10px; color:#cbd5e1; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:6px; padding:0.15rem 0.45rem; cursor:pointer; transition:all 120ms ease; }
+.code-copy-btn:hover { color:#fff; border-color:var(--border-strong); background:rgba(255,255,255,0.07); }
+.code-copy-btn.copied { color:#86efac; border-color:rgba(34,197,94,0.35); background:rgba(34,197,94,0.12); }
+.code-card pre { margin:0; padding:0.65rem 0.75rem; background:transparent; overflow-x:auto; max-width:100%; }
+.code-card code { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px; line-height:1.55; color:#e5e7eb; white-space:pre; display:block; }
+.code-card .hljs { background: transparent !important; padding: 0 !important; }
+/* Agent edit cards */
+.edit-cards { margin: 0.45rem 0; display:flex; flex-direction:column; gap:0.45rem; }
+.edit-card { border:1px solid rgba(99,102,241,0.24); border-radius:10px; background:#0d111a; overflow:hidden; }
+.edit-card-header { display:flex; align-items:center; justify-content:space-between; gap:0.5rem; padding:0.4rem 0.55rem; background:rgba(99,102,241,0.08); cursor:pointer; user-select:none; }
+.edit-card-title { display:flex; align-items:center; gap:0.45rem; min-width:0; font-size:11.5px; color:#e0e7ff; font-family:"JetBrains Mono",ui-monospace,monospace; }
+.edit-card-title .path { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.edit-card-badge { font-size:10px; color:#c7d2fe; background:rgba(99,102,241,0.18); border:1px solid rgba(99,102,241,0.25); border-radius:999px; padding:0.05rem 0.4rem; flex:0 0 auto; }
+.edit-card-actions { display:flex; gap:0.35rem; flex:0 0 auto; }
+.edit-card-btn { font-size:10px; color:#cbd5e1; background:rgba(255,255,255,0.04); border:1px solid var(--border); border-radius:6px; padding:0.15rem 0.45rem; cursor:pointer; }
+.edit-card-btn:hover { color:#fff; border-color:var(--border-strong); background:rgba(255,255,255,0.07); }
+.edit-card-btn.primary { color:#c7d2fe; border-color:rgba(99,102,241,0.35); background:rgba(99,102,241,0.12); }
+.edit-card-body { border-top:1px solid var(--border); max-height:320px; overflow:auto; }
+.edit-card-body.collapsed { display:none; }
+.edit-card-body pre { margin:0; padding:0.55rem 0.65rem; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11.5px; line-height:1.5; color:#dbeafe; white-space:pre; overflow-x:auto; }
+.edit-card-meta { font-size:10px; color:#94a3b8; padding:0.25rem 0.55rem 0.4rem; border-top:1px solid var(--border); }
 .json-edits-card { margin: 0.45rem 0; border: 1px solid rgba(99,102,241,0.22); border-radius: 10px; background: #0d111a; overflow: hidden; }
 .json-edits-summary { cursor: pointer; list-style: none; padding: 0.45rem 0.6rem; font-size: 11px; color: #c7d2fe; background: rgba(99,102,241,0.08); display: flex; align-items: center; gap: 0.4rem; user-select: none; }
 .json-edits-summary::-webkit-details-marker { display: none; }
@@ -228,6 +263,7 @@ select.input { padding-right: 1.8rem; }
 .chat-input-row #chatInput.input { background: transparent; border: 0; box-shadow: none; padding: 0.55rem 0.25rem; margin: 0; min-height: 3rem; max-height: 12rem; resize: none; line-height: 1.5; }
 .chat-input-row #chatInput.input:focus { border: 0; box-shadow: none; outline: none; }
 .chat-attach-btn, .chat-send-btn { flex: 0 0 auto; margin-bottom: 0.15rem; }
+.composer-mode-select { height: 28px; width: auto; min-width: 96px; max-width: 120px; padding: 0.1rem 1.4rem 0.1rem 0.45rem !important; font-size: 11px !important; background: rgba(255,255,255,0.03) !important; }
 .agent-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding-top: 0.35rem; border-top: 1px solid var(--border); }
 .pill-tabs .tab-btn { border-radius: 999px; padding: 0.35rem 0.55rem; }
 .status-pill-center { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.6rem; border-radius: 999px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); font-size: 11px; color: #cbd5e1; max-width: 22rem; }

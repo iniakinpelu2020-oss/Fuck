@@ -284,6 +284,17 @@
                   </button>
                   <input id="chatFileInput" type="file" multiple accept="*/*" class="hidden" />
                 </div>
+                <div class="composer-toolbar flex items-center justify-between gap-2 mt-2 px-0.5">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <label class="sr-only" for="agentModeSelect">Mode</label>
+                    <select id="agentModeSelect" class="input input-compact composer-mode-select" title="Response mode" aria-label="Response mode">
+                      <option value="chat">Chat</option>
+                      <option value="agent" selected>Agent</option>
+                      <option value="edit">Edit</option>
+                    </select>
+                    <span class="text-[10px] text-slate-500 hidden sm:inline">Chat: markdown replies · Agent/Edit: workspace edits</span>
+                  </div>
+                </div>
                 <div class="hidden" aria-hidden="true">
                   <button id="agent-send-btn" type="submit">Send</button>
                   <button id="btnIndexWorkspace" type="button">Index Workspace</button>

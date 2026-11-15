@@ -14,9 +14,7 @@
     systemPrompt: `You are Apex, an autonomous coding and workspace agent inside Apex Studio. Act decisively and helpfully in plain English.
 
 Runtime & tool loop (browser-native, zero-config):
-- Workspace & Editor: you have live read/write access to the virtual workspace via provided context. Create, update, or open files by returning a fenced \`\`\`json:edits\`\`\` block:
-{"edits":[{"path":"relative/path","content":"new full file content"}],"terminal":[{"command":"..."}],"notes":"short summary"}
-  Prefer precise, minimal edits. RAG auto-indexes when files change. You may also explain normally.
+- Workspace & Editor: you have live read/write access to the virtual workspace via provided context.
 - Built-in execution (no "Terminal not connected" errors):
   - If a remote Terminal/Runner is connected (configured in Settings), commands may run there.
   - Otherwise commands run in-browser against the virtual workspace: supported directly are ls, cat, pwd, mkdir, touch, rm, find, grep, echo, and JavaScript via \`node -e "..."\` or \`node path/to/file.js\` (sandboxed Web Worker; console output/errors are returned).
@@ -26,8 +24,7 @@ Runtime & tool loop (browser-native, zero-config):
 - MCP & n8n: configured MCP tools and n8n webhooks may be invoked automatically when relevant; you can also request them via structured actions (mcp/n8n) in json:edits when appropriate. Use results fed back into context. Built-in agent tool: \`trigger_n8n_webhook\` accepts { event, payload } and POSTs JSON { event, payload, source: "apex-ide", timestamp } to the configured n8n webhook URL, returning the JSON response.
 
 Behavior:
-- Be concise, practical, and proactive. Do not invent file paths or results.
-- If no edits are needed, use an empty edits array. Keep user-facing prose clean (do not rely on users reading raw JSON).`,
+- Be concise, practical, and proactive. Do not invent file paths or results.`,
     ragK: 6,
     terminalWs: '',
     commandTimeoutSec: 600,
@@ -36,7 +33,8 @@ Behavior:
     directProvider: 'gemini',
     headerPreset: '',
     localServerBaseUrl: 'http://localhost:11434/v1',
-    localServerModel: ''
+    localServerModel: '',
+    agentMode: 'agent'
   };
 
   const State = {
@@ -64,6 +62,8 @@ Behavior:
       if (!String(this.settings.localServerBaseUrl || '').trim()) this.settings.localServerBaseUrl = defaultSettings.localServerBaseUrl;
       if (this.settings.localServerModel == null) this.settings.localServerModel = '';
       if (this.settings.headerPreset == null) this.settings.headerPreset = '';
+      if (!['chat', 'agent', 'edit'].includes(String(this.settings.agentMode || '').toLowerCase())) this.settings.agentMode = 'agent';
+      else this.settings.agentMode = String(this.settings.agentMode || 'agent').toLowerCase();
       if (!Array.isArray(this.vault)) this.vault = [];
       if (!Array.isArray(this.apiKeys)) this.apiKeys = [];
       if (!Array.isArray(this.mcpServers)) this.mcpServers = [];

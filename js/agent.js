@@ -68,7 +68,83 @@
       const bridge = window.ApexWorkflowBridge || window.AetherWorkflowBridge;
       if (bridge && typeof bridge.subscribe === 'function') bridge.subscribe((state) => this.onN8nStatus(state));
       AppState.subscribe((evt, payload) => { if (evt === 'n8n:status') this.onN8nStatus(payload); });
+      this.bindChatUiHandlers();
       this.updateKeyStatus();
+    },
+
+    bindChatUiHandlers() {
+      if (this._chatUiHandlersBound) return;
+      this._chatUiHandlersBound = true;
+      const wrap = document.getElementById('chatMessages');
+      if (!wrap) return;
+      wrap.addEventListener('click', async (e) => {
+        const copyBtn = e.target.closest('[data-copy-code="1"]');
+        if (copyBtn) {
+          e.preventDefault();
+          const card = copyBtn.closest('.code-card');
+          const codeEl = card ? card.querySelector('pre code') : null;
+          const text = codeEl ? codeEl.textContent : '';
+          try {
+            await navigator.clipboard.writeText(text);
+            copyBtn.textContent = 'Copied!';
+            copyBtn.classList.add('copied');
+            clearTimeout(copyBtn._copyTimer);
+            copyBtn._copyTimer = setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('copied'); }, 2000);
+          } catch {
+            copyBtn.textContent = 'Copy failed';
+            copyBtn.classList.remove('copied');
+            clearTimeout(copyBtn._copyTimer);
+            copyBtn._copyTimer = setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+          }
+          return;
+        }
+
+        const actionBtn = e.target.closest('[data-edit-action]');
+        if (actionBtn) {
+          e.preventDefault(); e.stopPropagation();
+          const card = actionBtn.closest('.edit-card');
+          const action = actionBtn.getAttribute('data-edit-action');
+          const jsonEl = card ? card.querySelector('.edit-card-json') : null;
+          let payload = null;
+          try { payload = jsonEl ? JSON.parse(jsonEl.textContent || '{}') : null; } catch {}
+          if (!payload || !payload.path) return;
+          if (action === 'preview') {
+            const body = card ? card.querySelector('.edit-card-body') : null;
+            if (body) body.classList.toggle('collapsed');
+            try {
+              if (window.Editor && typeof Editor.openOrCreate === 'function') {
+                Editor.openOrCreate(payload.path, payload.content == null ? '' : String(payload.content));
+                if (window.App && App.setView) App.setView('editor');
+              }
+            } catch {}
+          } else if (action === 'apply') {
+            try {
+              if (window.Editor && typeof Editor.applyEdits === 'function') {
+                const applied = Editor.applyEdits([{ path: payload.path, content: payload.content == null ? '' : String(payload.content) }]) || [];
+                if (applied.length) {
+                  actionBtn.textContent = 'Applied';
+                  actionBtn.disabled = true;
+                  const badge = card ? card.querySelector('.edit-card-badge') : null;
+                  if (badge) badge.textContent = 'Applied';
+                  if (card) card.dataset.applied = '1';
+                  if (window.App && App.setView) App.setView('editor');
+                  Utils.toast(`Applied ${payload.path}`, 'success');
+                }
+              }
+            } catch (err) {
+              Utils.toast(`Apply failed: ${err && err.message ? err.message : err}`, 'error');
+            }
+          }
+          return;
+        }
+
+        const toggle = e.target.closest('[data-edit-toggle]');
+        if (toggle && !e.target.closest('button')) {
+          const card = toggle.closest('.edit-card');
+          const body = card ? card.querySelector('.edit-card-body') : null;
+          if (body) body.classList.toggle('collapsed');
+        }
+      });
     },
 
     autoResizeChat() {
@@ -119,6 +195,33 @@
       }
     },
 
+    getAgentMode() {
+      try {
+        const sel = document.getElementById('agentModeSelect');
+        if (sel && sel.value) {
+          const v = String(sel.value).toLowerCase();
+          if (v === 'chat' || v === 'agent' || v === 'edit') return v;
+        }
+      } catch {}
+      const s = (window.AppState && AppState.settings && AppState.settings.agentMode) ? String(AppState.settings.agentMode).toLowerCase() : 'agent';
+      return (s === 'chat' || s === 'agent' || s === 'edit') ? s : 'agent';
+    },
+
+    getEffectiveSystemPrompt(mode) {
+      const m = mode || this.getAgentMode();
+      const base = String((window.AppState && AppState.settings && AppState.settings.systemPrompt) || '').trim();
+      if (m === 'chat') {
+        return base + '\n\n--- Response Mode: Chat ---\n' +
+          'Reply in clear, helpful plain English. Use standard fenced Markdown code blocks (```language ... ```). ' +
+          'Do NOT emit ```json:edits``` blocks, do NOT emit structured action JSON for workspace/terminal/MCP/n8n automation, and do NOT claim to have modified files or run commands unless results are explicitly provided in context. ' +
+          'If the user asks for code changes, provide the code in normal Markdown fenced blocks with explanations.';
+      }
+      return base + '\n\n--- Response Mode: Agent/Edit (workspace actions enabled) ---\n' +
+        'When you need to create, update, or modify workspace files, return a fenced ```json:edits``` block with this shape:\n' +
+        '{"edits":[{"path":"relative/path","content":"new full file content"}],"terminal":[{"command":"..."}],"notes":"short summary"}\n' +
+        'Prefer precise, minimal edits. If no edits are needed, use an empty edits array or omit the block. Keep user-facing prose clean; the UI will present file changes as structured cards.';
+    },
+
     escapeHtml(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); },
 
     stripActionBlocks(text) {
@@ -128,10 +231,7 @@
       s = s.replace(/```json\s*([\s\S]*?)```/gi, (m, body) => {
         const obj = Utils.safeJsonParse(body, null);
         if (obj && (obj.edits || obj.terminal || obj.mcp || obj.n8n)) return '';
-        // collapse other JSON blocks to a compact details element
-        const trimmed = String(body || '').trim();
-        if (!trimmed) return '';
-        return `<details class="json-edits-card"><summary class="json-edits-summary"><span class="json-edits-dot"></span>json</summary><pre class="json-edits"><code>${this.escapeHtml(trimmed)}</code></pre></details>`;
+        return m; // keep non-action json as normal markdown code block (rendered later)
       });
       // Clean excessive blank lines left by stripping
       s = s.replace(/\n{3,}/g, '\n\n').trim();
@@ -153,7 +253,8 @@
       while ((m = fenceRe.exec(s)) !== null) last = m.index;
       if (last >= 0) {
         const tail = s.slice(last);
-        if (!/```\s*$/.test(tail.replace(/```(?:json:edits|json)\b/i, ''))) {
+        const afterLang = tail.replace(/^```(?:json:edits|json)\b[^\n]*\n?/i, '');
+        if (!/```(?:\s*)$/.test(afterLang)) {
           // no closing fence yet for this action block start -> hide from start of trailing fence
           s = s.slice(0, last);
         }
@@ -161,14 +262,149 @@
       return s.replace(/\n{3,}/g, '\n\n');
     },
 
-    renderMessageContent(content, opts = {}) {
-      const stripped = (opts.raw === true) ? String(content ?? '') : this.stripActionBlocks(content);
-      // stripActionBlocks may return HTML for collapsed non-action json blocks; handle mixed content safely
-      const parts = String(stripped).split(/(<details class="json-edits-card">[\s\S]*?<\/details>)/gi);
-      return parts.map(part => {
-        if (/^<details class="json-edits-card">/i.test(part)) return part;
-        return `<span>${this.escapeHtml(part)}</span>`;
+    extractActionJsonEditsBlocks(text) {
+      const blocks = [];
+      const re = /```json:edits\s*([\s\S]*?)```/gi;
+      let m;
+      while ((m = re.exec(String(text || ''))) !== null) {
+        const obj = Utils.safeJsonParse(m[1], null);
+        if (obj && typeof obj === 'object' && (Array.isArray(obj.edits) || obj.terminal || obj.mcp || obj.n8n || obj.notes)) blocks.push(obj);
+      }
+      // also accept plain ```json fences that are clearly edit/action payloads
+      const re2 = /```json\s*([\s\S]*?)```/gi;
+      while ((m = re2.exec(String(text || ''))) !== null) {
+        const obj = Utils.safeJsonParse(m[1], null);
+        if (obj && typeof obj === 'object' && Array.isArray(obj.edits)) blocks.push(obj);
+      }
+      return blocks;
+    },
+
+    renderMarkdownWithCodeBlocks(content) {
+      const src = String(content ?? '').replace(/\r\n?/g, '\n');
+      const parts = src.split(/(```[\s\S]*?```)/g);
+      let html = '';
+      for (const part of parts) {
+        if (!part) continue;
+        const fence = part.match(/^```([^\n`]*)\n?([\s\S]*?)```$/);
+        if (fence) {
+          const rawLang = String(fence[1] || '').trim();
+          const lang = (rawLang.split(/\s+/)[0] || 'text').toLowerCase();
+          const code = String(fence[2] || '').replace(/\n$/, '');
+          const langLabel = lang === 'json:edits' ? 'json:edits' : lang;
+          let highlighted = this.escapeHtml(code);
+          try {
+            if (window.hljs) {
+              if (lang && lang !== 'text' && lang !== 'plain' && hljs.getLanguage && hljs.getLanguage(lang)) {
+                highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+              } else if (hljs.highlightAuto) {
+                const auto = hljs.highlightAuto(code);
+                highlighted = auto && auto.value ? auto.value : highlighted;
+              }
+            }
+          } catch { highlighted = this.escapeHtml(code); }
+          html += `<div class="code-card" data-lang="${this.escapeHtml(langLabel)}">` +
+            `<div class="code-card-bar"><span class="code-card-lang">${this.escapeHtml(langLabel || 'text')}</span>` +
+            `<button type="button" class="code-copy-btn" data-copy-code="1">Copy</button></div>` +
+            `<pre><code class="hljs language-${this.escapeHtml(langLabel || 'text')}">${highlighted}</code></pre></div>`;
+        } else {
+          html += this.renderInlineMarkdown(part);
+        }
+      }
+      return `<div class="chat-md">${html || ''}</div>`;
+    },
+
+    renderInlineMarkdown(text) {
+      const lines = String(text ?? '').split('\n');
+      let out = '';
+      let inUl = false, inOl = false;
+      const flush = () => { if (inUl) { out += '</ul>'; inUl = false; } if (inOl) { out += '</ol>'; inOl = false; } };
+      const inline = (s) => {
+        let x = this.escapeHtml(s);
+        // inline code first
+        x = x.replace(/`([^`\n]+)`/g, (_, c) => `<code class="inline-code">${c}</code>`);
+        // bold / italic (simple)
+        x = x.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        x = x.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+        // links [text](url)
+        x = x.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        return x;
+      };
+      for (const raw of lines) {
+        const line = raw;
+        const h = line.match(/^(#{1,4})\s+(.*)$/);
+        if (h) { flush(); const lvl = h[1].length; out += `<h${lvl}>${inline(h[2])}</h${lvl}>`; continue; }
+        const ul = line.match(/^\s*[-*]\s+(.*)$/);
+        if (ul) { if (inOl) { out += '</ol>'; inOl = false; } if (!inUl) { out += '<ul>'; inUl = true; } out += `<li>${inline(ul[1])}</li>`; continue; }
+        const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+        if (ol) { if (inUl) { out += '</ul>'; inUl = false; } if (!inOl) { out += '<ol>'; inOl = true; } out += `<li>${inline(ol[1])}</li>`; continue; }
+        if (!line.trim()) { flush(); out += ''; continue; }
+        const bq = line.match(/^>\s?(.*)$/);
+        if (bq) { flush(); out += `<blockquote>${inline(bq[1])}</blockquote>`; continue; }
+        flush();
+        out += `<p>${inline(line)}</p>`;
+      }
+      flush();
+      return out;
+    },
+
+    renderEditCards(actions, opts = {}) {
+      const edits = (actions && Array.isArray(actions.edits)) ? actions.edits : [];
+      if (!edits.length) return '';
+      const appliedSet = new Set(((opts.applied || []).map(a => a && a.path).filter(Boolean)));
+      const cards = edits.map((e, idx) => {
+        const path = String(e.path || `edit-${idx + 1}`);
+        const content = String(e.content == null ? '' : e.content);
+        const wasApplied = appliedSet.has(path);
+        const lang = (window.Utils && Utils.detectLang) ? Utils.detectLang(path) : 'text';
+        const id = `editcard_${Date.now().toString(36)}_${idx}_${Math.random().toString(36).slice(2,6)}`;
+        const preview = content.length > 12000 ? content.slice(0, 12000) + '\n… (truncated preview)' : content;
+        const escPath = this.escapeHtml(path);
+        const escId = this.escapeHtml(id);
+        return `<div class="edit-card" data-edit-id="${escId}" data-edit-path="${escPath}" data-applied="${wasApplied ? '1' : '0'}">` +
+          `<div class="edit-card-header" data-edit-toggle="${escId}">` +
+            `<div class="edit-card-title"><span class="json-edits-dot"></span><span class="path" title="${escPath}">${escPath}</span></div>` +
+            `<div class="flex items-center gap-2">` +
+              `<span class="edit-card-badge">${wasApplied ? 'Applied' : 'Change'}</span>` +
+              `<div class="edit-card-actions">` +
+                `<button type="button" class="edit-card-btn" data-edit-action="preview" data-edit-id="${escId}">Preview</button>` +
+                `<button type="button" class="edit-card-btn primary" data-edit-action="apply" data-edit-id="${escId}" ${wasApplied ? 'disabled' : ''}>${wasApplied ? 'Applied' : 'Apply'}</button>` +
+              `</div>` +
+            `</div>` +
+          `</div>` +
+          `<div class="edit-card-body collapsed" id="${escId}"><pre><code class="language-${this.escapeHtml(lang)}">${this.escapeHtml(preview)}</code></pre></div>` +
+          `<div class="edit-card-meta">${this.escapeHtml(lang)} · ${content.length} chars</div>` +
+          `<script type="application/json" class="edit-card-json">${this.escapeHtml(JSON.stringify({ path, content }))}</script>` +
+        `</div>`;
       }).join('');
+      return `<div class="edit-cards">${cards}</div>`;
+    },
+
+    renderMessageContent(content, opts = {}) {
+      const mode = (opts && opts.mode) || this.getAgentMode();
+      const raw = String(content ?? '');
+      const isStreaming = !!(opts && opts.streaming);
+      if (opts && opts.raw === true) {
+        return `<pre class="chat-content">${this.escapeHtml(raw)}</pre>`;
+      }
+
+      if (mode === 'chat') {
+        const text = isStreaming ? this.streamDisplayText(raw) : this.stripActionBlocks(raw);
+        if (isStreaming && !text.trim()) return `<pre class="chat-content"></pre>`;
+        return this.renderMarkdownWithCodeBlocks(text);
+      }
+
+      // Agent/Edit: show prose as markdown, render json:edits as collapsible file-change cards
+      const blocks = this.extractActionJsonEditsBlocks(raw);
+      const merged = { edits: [] };
+      for (const b of blocks) {
+        if (Array.isArray(b.edits)) merged.edits.push(...b.edits.filter(e => e && e.path));
+      }
+      const prose = isStreaming ? this.streamDisplayText(raw) : this.stripActionBlocks(raw);
+      let html = '';
+      if (merged.edits.length) html += this.renderEditCards(merged, { applied: opts.applied || [] });
+      if (prose.trim()) html += this.renderMarkdownWithCodeBlocks(prose);
+      if (!html) html = `<pre class="chat-content"></pre>`;
+      return html;
     },
 
     renderBadges(badges) {
@@ -213,7 +449,9 @@
       const who = role === 'user' ? 'You' : (role === 'system' ? 'System' : 'Agent');
       const icon = role === 'user' ? '<span class="msg-avatar msg-avatar-user">U</span>' : '<span class="msg-avatar msg-avatar-agent">A</span>';
       const metaHtml = meta ? `<span class="badge badge-muted" style="margin-left:auto">${this.escapeHtml(meta)}</span>` : '';
-      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><pre class="chat-content">${this.renderMessageContent(content)}</pre>${this.renderBadges(badges)}`;
+      const mode = (opts && opts.mode) || this.getAgentMode();
+      const rendered = (role === 'assistant') ? this.renderMessageContent(content, { mode, applied: opts.applied || [] }) : `<pre class="chat-content">${this.escapeHtml(String(content ?? ''))}</pre>`;
+      div.innerHTML = `<div class="meta">${icon}<span>${who}</span>${metaHtml}</div><div class="chat-content">${rendered}</div>${this.renderBadges(badges)}`;
       wrap.appendChild(div);
       wrap.scrollTop = wrap.scrollHeight;
 
@@ -371,11 +609,11 @@
           const message = prompt.replace(/^\/(?:n8n|trigger)\b/i, '').replace(/^trigger\s+n8n\b/i, '').trim() || prompt;
           const attachmentLabel = chatAttachments.length ? `\n\n[${chatAttachments.length} attached file${chatAttachments.length === 1 ? '' : 's'} queued: ${chatAttachments.map(a => a && a.name).filter(Boolean).join(', ')}]` : '';
           this.addMessage('user', prompt + attachmentLabel);
-          const streamBubble = this.createStreamingAssistantBubble('n8n'); // immediate "Thinking..." pulse
+          const streamBubble = this.createStreamingAssistantBubble('n8n', { mode: this.getAgentMode() }); // immediate "Thinking..." pulse
           const pill = this.addStatusPill('⚡ Running n8n workflow...', 'running');
           const r = await this.triggerN8n(message, { from: 'agent-command' }, { source: 'agent-chat', showErrors: true });
           this.updateStatusPill(pill, r.ok ? '⚡ n8n workflow triggered' : `⚡ n8n workflow failed${r.error ? ': ' + r.error : ''}`, r.ok ? 'done' : 'error');
-          if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`);
+          if (streamBubble) streamBubble.finalize(r.ok ? 'n8n workflow triggered successfully.' : `n8n workflow failed${r.error ? ': ' + r.error : ''}`, [], { mode: 'chat' });
         } finally {
           this.setGenerating(false);
         }
@@ -390,7 +628,8 @@
       const userDisplay = prompt || (chatAttachments.length ? `[Attached ${chatAttachments.length} file${chatAttachments.length === 1 ? '' : 's'}: ${chatAttachments.map(a => a && a.name).filter(Boolean).join(', ')}]` : '');
       this.addMessage('user', userDisplay);
       // Immediate animated "Thinking..." pulse inside assistant bubble
-      const streamBubble = this.createStreamingAssistantBubble('chat');
+      const currentMode = this.getAgentMode();
+      const streamBubble = this.createStreamingAssistantBubble('chat', { mode: currentMode });
       try {
         await this.runPrompt(prompt, { fromUI: true, streamBubble, attachments: chatAttachments });
       } catch (e) {
@@ -399,7 +638,7 @@
         // Strip any dangling tool_calls without matching tool responses before persisting state
         try { if (window.AppState && typeof AppState.saveChatSessions === 'function') AppState.saveChatSessions(); } catch {}
         if (streamBubble) streamBubble.setError(`Error: ${msg}`);
-        else this.addMessage('assistant', `Error: ${msg}`, 'error');
+        else this.addMessage('assistant', `Error: ${msg}`, 'error', [], { mode: currentMode });
       } finally {
         this.setGenerating(false);
       }
@@ -789,7 +1028,9 @@
       }
       const keys = customKeys.length ? customKeys : [''];
       const total = keys.length;
-      const system = AppState.settings.systemPrompt || '';
+      const system = (opts && Object.prototype.hasOwnProperty.call(opts, 'system'))
+        ? String(opts.system == null ? '' : opts.system)
+        : ((typeof this.getEffectiveSystemPrompt === 'function') ? this.getEffectiveSystemPrompt(this.getAgentMode()) : String((AppState.settings && AppState.settings.systemPrompt) || ''));
       // Enable SSE streaming (stream: true) for live token rendering by default on OpenAI-compatible endpoints
       const wantStream = opts.stream !== false && provider !== 'anthropic' && !opts.disableStream;
       let lastError = null;
@@ -994,8 +1235,13 @@
       // tool/search/automation notes
       for (const n of (toolNotes || [])) {
         const s = String(n || '');
-        if (/^Web search:s*d+/i.test(s)) badges.push(`✓ Searched web`);
-        else if (/^Web search:/i.test(s)) badges.push(`✓ Web search`);
+        if (/^Web search/i.test(s)) {
+          const m = s.match(/^Web search(?:\s*\(([^)]+)\))?:\s*(.*)$/i);
+          if (m && m[2] && /\d+\s+result/.test(m[2])) badges.push(`✓ Web search${m[1] ? `: ${m[1]}` : ''}`);
+          else if (m && m[2] && /no results/i.test(m[2])) badges.push(`✓ Web search${m[1] ? `: ${m[1]}` : ''} (no results)`);
+          else if (/^Web search:/i.test(s)) badges.push(`✓ ${s}`);
+          else badges.push('✓ Web search');
+        }
         else if (/n8n workflow triggered/i.test(s)) badges.push(`✓ n8n workflow`);
         else if (/Binary analysis/i.test(s)) badges.push(`✓ Binary analyzed`);
       }
@@ -1031,16 +1277,17 @@
       // 1) Unified autonomous tool routing (pre-LLM): web search, binary context, n8n, MCP, RAG
       const wantsSearch = this.shouldSearch(prompt);
       if (wantsSearch) {
-        const pill = this.addStatusPill('🔍 Searching web...', 'running');
+        const searchPreview = this.formatToolArgsPreview({ query: prompt }, 60);
+        const pill = this.addStatusPill(`🔍 Searching web${searchPreview ? `: ${searchPreview}` : ''}...`, 'running');
         try {
           const data = await this.performWebSearch(prompt);
           const formatted = this.formatSearchResults(data);
           const ok = Array.isArray(data.results) && data.results.length > 0;
           extraContext += `\n\n--- Web Search Results (/api/search) ---\n${formatted}`;
-          toolNotes.push(ok ? `Web search: ${data.results.length} result(s)` : (data.error ? `Web search: ${data.error}` : 'Web search: no results'));
-          this.updateStatusPill(pill, ok ? `🔍 Searched web (${data.results.length} sources)` : `🔍 Web search: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
+          toolNotes.push(ok ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${data.results.length} result(s)` : (data.error ? `Web search${searchPreview ? ` (${searchPreview})` : ''}: ${data.error}` : `Web search${searchPreview ? ` (${searchPreview})` : ''}: no results`));
+          this.updateStatusPill(pill, ok ? `🔍 Searched web${searchPreview ? `: ${searchPreview}` : ''} (${data.results.length} sources)` : `🔍 Web search${searchPreview ? `: ${searchPreview}` : ''}: ${data.error || 'no results'}`, ok ? 'done' : 'warn');
         } catch (e) {
-          toolNotes.push(`Web search failed: ${e.message}`);
+          toolNotes.push(`Web search${searchPreview ? ` (${searchPreview})` : ''} failed: ${e.message}`);
           this.updateStatusPill(pill, `🔍 Web search failed: ${e.message}`, 'error');
         }
       }
@@ -1143,7 +1390,10 @@
               tool_calls: toolCalls.map(tc => ({
                 id: tc.id,
                 type: tc.type || 'function',
-                function: { name: tc.function && tc.function.name, arguments: tc.function && tc.function.arguments }
+                function: {
+                  name: tc.function && tc.function.name,
+                  arguments: this.serializeToolArgs(tc.function ? tc.function.arguments : '{}')
+                }
               }))
             });
 
@@ -1153,23 +1403,25 @@
               const fargs = (typeof this.normalizeToolCallArgs === 'function')
                 ? this.normalizeToolCallArgs(fargsRaw)
                 : (Utils.safeJsonParse(fargsRaw, {}) || {});
+              const argPreview = (typeof this.formatToolArgsPreview === 'function') ? this.formatToolArgsPreview(fargs) : '';
               let toolResultText = '';
               try {
                 const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
                 if (mcpTarget && window.MCP && typeof MCP.callTool === 'function') {
-                  const pill = this.addStatusPill(`🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}...`, 'running');
+                  const pillLabel = `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` (${argPreview})` : ''}...`;
+                  const pill = this.addStatusPill(pillLabel, 'running');
                   try {
                     const result = await MCP.callTool(mcpTarget.server, mcpTarget.tool, fargs);
                     toolResultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` [${argPreview}]` : ''} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
                     this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} completed`, 'done');
                   } catch (e) {
                     toolResultText = `Error: ${e.message || e}`;
-                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool} (tool_call) failed: ${e.message || e}`);
+                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` [${argPreview}]` : ''} (tool_call) failed: ${e.message || e}`);
                     this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} failed`, 'error');
                   }
                 } else if (fname === 'run_shell' || fname === 'terminal' || fname === ':terminal') {
-                  const cmd = (fargs && (fargs.command || fargs.cmd)) ? String(fargs.command || fargs.cmd) : '';
+                  const cmd = (fargs && (fargs.command || fargs.cmd)) ? String(fargs.command || fargs.cmd) : (argPreview || '');
                   if (cmd && window.TerminalPanel && typeof TerminalPanel.executeCommand === 'function') {
                     const configured = TerminalPanel.getConfiguredUrl ? TerminalPanel.getConfiguredUrl() : '';
                     const willRemote = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl()) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!configured;
@@ -1197,7 +1449,7 @@
               messages.push({
                 role: 'tool',
                 tool_call_id: tc.id || `call_${Math.random().toString(36).slice(2)}`,
-                content: this.truncateForModel(toolResultText, 12000)
+                content: this.truncateForModel(typeof toolResultText === 'string' ? toolResultText : JSON.stringify(toolResultText), 12000)
               });
             }
           }
@@ -1266,19 +1518,21 @@
         for (const call of actions.mcp) {
           let server = call.server || call.serverName;
           let tool = call.tool || call.name || call.toolName;
-          const args = call.arguments || call.args || {};
+          const rawArgs = call.arguments || call.args || {};
+          const args = this.normalizeToolCallArgs(rawArgs);
+          const argPreview = this.formatToolArgsPreview(args);
           if ((!server || !tool) && call.name) {
             const parsed = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
             if (parsed) { server = parsed.server; tool = parsed.tool; }
           }
           if (!server || !tool) continue;
-          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
+          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}${argPreview ? ` (${argPreview})` : ''}...`, 'running');
           try {
             const result = await MCP.callTool(server, tool, args);
-            execSummary.push(`MCP ${server}:${tool} result: ${this.formatN8nBody(result).slice(0, 500)}`);
+            execSummary.push(`MCP ${server}:${tool}${argPreview ? ` [${argPreview}]` : ''} result: ${this.formatN8nBody(result).slice(0, 500)}`);
             this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
           } catch (e) {
-            execSummary.push(`MCP ${server}:${tool} failed: ${e.message}`);
+            execSummary.push(`MCP ${server}:${tool}${argPreview ? ` [${argPreview}]` : ''} failed: ${e.message}`);
             this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
           }
         }

@@ -223,6 +223,22 @@
         });
       }
 
+      // Agent mode selector (Chat / Agent / Edit)
+      const modeSel = document.getElementById('agentModeSelect');
+      if (modeSel && !modeSel.dataset.boundMode) {
+        modeSel.dataset.boundMode = '1';
+        modeSel.addEventListener('change', () => {
+          const v = String(modeSel.value || 'agent').toLowerCase();
+          AppState.settings.agentMode = ['chat', 'agent', 'edit'].includes(v) ? v : 'agent';
+          AppState.saveSettings();
+        });
+      }
+      // sync initial
+      if (modeSel) {
+        const m = String((AppState.settings && AppState.settings.agentMode) || 'agent').toLowerCase();
+        modeSel.value = ['chat', 'agent', 'edit'].includes(m) ? m : 'agent';
+      }
+
       // Header quick model switcher
       this.bindHeaderModelSwitcher();
     },
@@ -656,6 +672,13 @@
         const servers = (window.AppState && Array.isArray(AppState.mcpServers)) ? AppState.mcpServers : [];
         const fallback = servers.length ? servers : [{ name: 'local-tools', url: 'ws://localhost:3002/mcp', transport: 'websocket' }];
         try { mcpInput.value = JSON.stringify(servers.length ? servers : fallback, null, 2); } catch { mcpInput.value = '[]'; }
+      }
+
+      // Agent response mode (Chat / Agent / Edit)
+      const modeSel = document.getElementById('agentModeSelect');
+      if (modeSel) {
+        const m = String(s.agentMode || 'agent').toLowerCase();
+        modeSel.value = ['chat', 'agent', 'edit'].includes(m) ? m : 'agent';
       }
 
       // Keep header/runner input and active runtime in sync with saved value
