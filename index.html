@@ -65,6 +65,29 @@
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
           </button>
         </div>
+        <div id="downloadAppWrap" class="download-app-wrap hidden" aria-hidden="true">
+          <div class="download-app-group">
+            <button id="btnDownloadApp" type="button" class="download-app-btn" title="Download Apex Studio for your device">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="download-app-label hidden sm:inline">Download App</span>
+              <span class="download-app-label-sm sm:hidden">App</span>
+            </button>
+            <button id="btnDownloadAppMenu" type="button" class="download-app-caret" title="Choose platform" aria-label="Choose download platform" aria-haspopup="menu" aria-expanded="false">
+              <svg class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+          <div id="downloadAppMenu" class="download-app-menu hidden" role="menu" aria-label="Download platforms">
+            <a class="download-app-item" role="menuitem" data-platform="android" href="https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-Android.apk">
+              <span class="download-app-item-name">Android</span><span class="download-app-item-ext">.apk</span>
+            </a>
+            <a class="download-app-item" role="menuitem" data-platform="windows" href="https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-Windows.exe">
+              <span class="download-app-item-name">Windows</span><span class="download-app-item-ext">.exe</span>
+            </a>
+            <a class="download-app-item" role="menuitem" data-platform="macos" href="https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-macOS.dmg">
+              <span class="download-app-item-name">macOS</span><span class="download-app-item-ext">.dmg</span>
+            </a>
+          </div>
+        </div>
         <button id="btnAuth" class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-panel/60 hover:bg-panel text-xs text-slate-200 transition h-8" title="Sign in to sync across devices">
           <span id="authAvatar" class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-700 text-[10px] overflow-hidden">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="w-3.5 h-3.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>

@@ -5,6 +5,7 @@
       this.bindHeader();
       this.bindSettings();
       this.bindMobile();
+      this.bindDownloadApp();
       this.restoreSettingsUI();
 
       FileTree.init();
@@ -614,6 +615,90 @@
         this.closeSettings();
         if (window.Utils && Utils.toast) Utils.toast('Settings saved', 'success');
       });
+    },
+
+    bindDownloadApp() {
+      const wrap = document.getElementById('downloadAppWrap');
+      if (!wrap) return;
+      const isNative = !!(window.Capacitor || window.__TAURI__ || (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()));
+      if (isNative) {
+        wrap.classList.add('hidden');
+        wrap.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      wrap.classList.remove('hidden');
+      wrap.setAttribute('aria-hidden', 'false');
+
+      const links = {
+        android: 'https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-Android.apk',
+        windows: 'https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-Windows.exe',
+        macos: 'https://github.com/iniakinpelu2020-oss/Fuck/releases/download/latest/Apex-Studio-macOS.dmg'
+      };
+
+      const detectPlatform = () => {
+        const ua = String((navigator && (navigator.userAgent || navigator.vendor)) || (window.opera || '') || '');
+        if (/android/i.test(ua)) return 'android';
+        if (/Win/i.test(ua)) return 'windows';
+        if (/Macintosh|Mac OS X/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua)) return 'macos';
+        return 'windows';
+      };
+
+      const primary = detectPlatform();
+      const primaryUrl = links[primary] || links.windows;
+      const btn = document.getElementById('btnDownloadApp');
+      const caret = document.getElementById('btnDownloadAppMenu');
+      const menu = document.getElementById('downloadAppMenu');
+      if (!btn || !caret || !menu) return;
+
+      const setMenuOpen = (open) => {
+        menu.classList.toggle('hidden', !open);
+        caret.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+
+      if (!btn.dataset.boundDownload) {
+        btn.dataset.boundDownload = '1';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          setMenuOpen(false);
+          window.location.href = primaryUrl;
+        });
+      }
+
+      if (!caret.dataset.boundDownloadMenu) {
+        caret.dataset.boundDownloadMenu = '1';
+        caret.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const open = menu.classList.contains('hidden');
+          setMenuOpen(open);
+        });
+      }
+
+      menu.querySelectorAll('.download-app-item').forEach((a) => {
+        if (a.dataset.boundDownloadItem) return;
+        a.dataset.boundDownloadItem = '1';
+        a.addEventListener('click', () => setMenuOpen(false));
+      });
+
+      if (!document.body.dataset.downloadAppOutsideBound) {
+        document.body.dataset.downloadAppOutsideBound = '1';
+        document.addEventListener('click', (e) => {
+          const w = document.getElementById('downloadAppWrap');
+          const m = document.getElementById('downloadAppMenu');
+          const c = document.getElementById('btnDownloadAppMenu');
+          if (!w || !m || !c) return;
+          if (w.contains(e.target)) return;
+          m.classList.add('hidden');
+          c.setAttribute('aria-expanded', 'false');
+        });
+        document.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape') return;
+          const m = document.getElementById('downloadAppMenu');
+          const c = document.getElementById('btnDownloadAppMenu');
+          if (m) m.classList.add('hidden');
+          if (c) c.setAttribute('aria-expanded', 'false');
+        });
+      }
     },
 
     bindMobile() {

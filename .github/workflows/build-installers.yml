@@ -125,3 +125,44 @@ jobs:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.artifact-path }}
           if-no-files-found: error
+
+  publish-release:
+    name: Publish Latest Release
+    needs: [build-android, build-desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release binaries
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          APK=$(find artifacts/Apex-Studio-Android-APK -type f -name '*.apk' | head -n 1)
+          EXE=$(find artifacts/Apex-Studio-Windows-Installer -type f -name '*.exe' | head -n 1)
+          DMG=$(find artifacts/Apex-Studio-macOS-Installer -type f -name '*.dmg' | head -n 1)
+          if [ -z "$APK" ] || [ -z "$EXE" ] || [ -z "$DMG" ]; then
+            echo "Missing expected installer artifact(s)"
+            find artifacts -type f || true
+            exit 1
+          fi
+          cp "$APK" release/Apex-Studio-Android.apk
+          cp "$EXE" release/Apex-Studio-Windows.exe
+          cp "$DMG" release/Apex-Studio-macOS.dmg
+          ls -lh release
+
+      - name: Publish latest GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Apex Studio Latest"
+          prerelease: false
+          make_latest: true
+          files: |
+            release/Apex-Studio-Android.apk
+            release/Apex-Studio-Windows.exe
+            release/Apex-Studio-macOS.dmg

@@ -552,3 +552,45 @@ header { height: 42px !important; min-height: 42px; }
   .nav-drawer { width: 280px; max-width: 86vw; }
   .chat-history-item .chat-history-actions { display: flex; opacity: 1; }
 }
+
+/* Download App (header) */
+.download-app-wrap { position: relative; display: inline-flex; align-items: center; }
+.download-app-wrap.hidden { display: none !important; }
+.download-app-group {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid rgba(99,102,241,0.35);
+  border-radius: 8px; overflow: hidden;
+  background: linear-gradient(180deg, rgba(99,102,241,0.18), rgba(59,130,246,0.12));
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.08) inset;
+}
+.download-app-btn, .download-app-caret {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+  height: 32px; color: #e2e8f0; background: transparent; border: 0; cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: background 140ms ease, color 140ms ease;
+}
+.download-app-btn { padding: 0 0.55rem; white-space: nowrap; }
+.download-app-caret { width: 26px; border-left: 1px solid rgba(255,255,255,0.08); color: #94a3b8; }
+.download-app-btn:hover, .download-app-caret:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.download-app-btn:active, .download-app-caret:active { background: rgba(255,255,255,0.12); }
+.download-app-caret[aria-expanded="true"] { background: rgba(255,255,255,0.08); color: #fff; }
+.download-app-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  min-width: 180px; padding: 4px;
+  background: #111827; border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+  border-radius: 10px; box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+}
+.download-app-menu.hidden { display: none; }
+.download-app-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 8px 10px; border-radius: 7px;
+  color: #cbd5e1; font-size: 12.5px; text-decoration: none; transition: background 120ms ease, color 120ms ease;
+}
+.download-app-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.download-app-item-name { font-weight: 500; }
+.download-app-item-ext { font-size: 11px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.download-app-item:hover .download-app-item-ext { color: #94a3b8; }
+@media (max-width: 480px) {
+  .download-app-btn .download-app-label { display: none; }
+  .download-app-btn { padding: 0 0.45rem; }
+}
+
