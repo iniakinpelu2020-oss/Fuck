@@ -19,15 +19,18 @@ Conversation & context:
 - Only discuss workspace files, code, or project state when the user asks about them, provides file context, or the task requires it. Never dump or summarize starter/placeholder files (like src/index.js or notes.txt) unless explicitly relevant.
 - Use workspace context when it is provided; if context is missing, ask or use available tools instead of guessing.
 
-Capabilities (when relevant):
-- Workspace & Editor: read/write virtual workspace files when requested or when performing edits.
-- Execution: use a connected remote runner when available (remote terminal supports shell commands; \`npx rea\` / \`rea\` from \`rea-agents\` is available on the remote runner for reverse engineering APKs, binaries, JS bundles, WASM, and network captures); otherwise browser sandbox supports ls, cat, pwd, mkdir, touch, rm, find, grep, echo, and JavaScript via \`node -e "..."\` or \`node path/to/file.js\`. No Linux shell/package installs in browser mode—write code/files directly and use Live Preview for web apps.
+Capabilities & tool use (when relevant):
+- Workspace & Editor: for browser-native web projects and workspace edits, use workspace file tools/actions (\`write_file\`, \`edit_file\`, or a fenced \`json:edits\` block) to create/update files directly in the in-browser workspace.
+- Execution: whenever the user asks to run shell commands, install packages, execute Python/Node scripts, or test backend code, call \`codespace_exec\` via MCP / Remote Terminal Runner (or available terminal execution tools) instead of pretending to run them. If a remote runner is not configured/connected, clearly report that and provide the exact command.
+- Browser sandbox fallback: without a remote runner, the browser sandbox supports ls, cat, pwd, mkdir, touch, rm, find, grep, echo, and JavaScript via \`node -e "..."\` or \`node path/to/file.js\` only. No Linux shell/package installs in browser mode—write code/files directly and use Live Preview for web apps.
+- MCP tools: use discovered/configured MCP tools (e.g. \`codespace_exec\`, \`github_repo_inspect\`, \`web_fetch\`) when they help complete the task.
+- n8n: whenever the user asks to trigger, run, or send data to an n8n automation workflow, call the built-in \`trigger_n8n_workflow\` tool with the appropriate JSON payload (uses the saved n8n Integration Webhook URL and Auth header).
 - Web search: use provided Web Search Results (/api/search) for live info/docs/news and cite sources.
 - Binary inspector: use provided Binary Inspection Output when present.
-- MCP & n8n: use configured tools/webhooks when relevant or explicitly requested; results may be fed back into context.
+- Tool results may be fed back into context; continue until you can give a final, accurate response.
 
 Behavior:
-- Be concise, practical, and proactive. Do not invent file paths, file contents, command results, or actions taken.`,
+- Be concise, practical, and proactive. Do not invent file paths, file contents, command results, or actions taken. Never misinterpret workspace export/download requests as HTML anchor tags—use the app's export/download actions when available.`,
     ragK: 6,
     terminalWs: '',
     commandTimeoutSec: 600,
@@ -37,11 +40,13 @@ Behavior:
     authHeaderValue: '',
     apiMode: 'managed',
     directProvider: 'gemini',
-    headerPreset: '',
+    agentModel: '@cf/qwen/qwen2.5-coder-32b-instruct',
+    headerPreset: 'managed-qwen',
     localServerBaseUrl: 'http://localhost:11434/v1',
     localServerModel: '',
     agentMode: 'agent',
-    attachWorkspaceContext: false
+    attachWorkspaceContext: false,
+    autoApplyEdits: true
   };
 
   const State = {
@@ -62,6 +67,19 @@ Behavior:
     ensureDefaults() {
       if (!this.settings || typeof this.settings !== 'object' || Array.isArray(this.settings)) this.settings = { ...defaultSettings };
       for (const k of Object.keys(defaultSettings)) { if (this.settings[k] == null) this.settings[k] = defaultSettings[k]; }
+      // Backfill agentAutoApply -> autoApplyEdits for older saved settings
+      if (this.settings.autoApplyEdits == null && typeof this.settings.agentAutoApply === 'boolean') {
+        this.settings.autoApplyEdits = this.settings.agentAutoApply;
+      }
+      if (typeof this.settings.autoApplyEdits !== 'boolean') this.settings.autoApplyEdits = true;
+      // Default managed coding model to Qwen 2.5 Coder 32B (do not override explicit custom endpoint/model setups)
+      const managedNoOverride = (String(this.settings.apiMode || '').toLowerCase() === 'managed') && !String(this.settings.agentEndpoint || '').trim();
+      if (managedNoOverride) {
+        const model = String(this.settings.agentModel || '').trim();
+        if (!model || model === '@cf/meta/llama-3.3-70b-instruct-fp8-fast') this.settings.agentModel = '@cf/qwen/qwen2.5-coder-32b-instruct';
+        const hp = String(this.settings.headerPreset || '').trim();
+        if (!hp || hp === 'managed-llama') this.settings.headerPreset = 'managed-qwen';
+      }
       if (!this.settings.apiMode) this.settings.apiMode = defaultSettings.apiMode;
       if (!this.settings.directProvider) this.settings.directProvider = defaultSettings.directProvider;
       if (this.settings.commandTimeoutSec == null) this.settings.commandTimeoutSec = defaultSettings.commandTimeoutSec;

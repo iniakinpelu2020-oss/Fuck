@@ -361,9 +361,11 @@
       if (this.shouldForceAgentModeForIntent(p)) m = 'agent';
       const base = String((window.AppState && AppState.settings && AppState.settings.systemPrompt) || '').trim();
       const collab = '\n\nCollaborate like a sharp human teammate. For casual greetings or general questions, reply naturally and directly; do not summarize workspace files, starter files, or project state unless the user asks about them or relevant context is explicitly provided.';
-      const mcpInstr = '\n\n--- Autonomous MCP tool calling ---\n' +
-        'When you need to use an MCP tool, emit either (1) native OpenAI-compatible tool_calls, (2) a fenced ```json:mcp``` block, or (3) a raw JSON object {"name":"mcp__<server>__<tool>","arguments":{...}}. ' +
-        'The runtime intercepts it, executes via MCPClient.callTool(server, tool, args), renders a compact tool-execution status pill, appends the tool result to conversation history, and continues your turn automatically (up to 5 tool hops) until you produce a final plain-English response. Do not repeat the same tool call unnecessarily.';
+      const mcpInstr = '\n\n--- Autonomous tool calling & execution ---\n' +
+        'You can and should invoke tools when helpful. Available tools may include discovered MCP tools (e.g. mcp__apex-mcp__codespace_exec, mcp__apex-mcp__github_repo_inspect, mcp__apex-mcp__web_fetch, mcp__n8n-mcp__*), the built-in trigger_n8n_workflow tool, and workspace/terminal tools. ' +
+        'Emit either (1) native OpenAI-compatible tool_calls, (2) a fenced ```json:mcp``` block, or (3) a raw JSON tool object {"name":"...","arguments":{...}}. ' +
+        'The runtime executes tool calls (MCP / runner / webhook / workspace), renders inline tool-execution badges with collapsible output, appends tool results to conversation history, and continues automatically (up to 5 tool hops) until you produce a final plain-English response. Do not repeat the same tool call unnecessarily. ' +
+        'Guidance: for browser-native web projects use workspace file tools/actions (write_file, edit_file, or ```json:edits```). When the user asks to run shell commands, install packages, execute Python/Node scripts, or test backend code, call codespace_exec via MCP / Remote Terminal Runner (or available terminal execution tool). When the user asks to trigger, run, or send data to an n8n automation workflow, call trigger_n8n_workflow with the appropriate JSON payload. Never claim commands/workflows ran unless a tool result confirms it.';
       const reaInstr = (typeof this.getReaSystemInstructions === 'function') ? this.getReaSystemInstructions(p) : '';
       if (m === 'chat') {
         return base + collab + mcpInstr + reaInstr + '\n\n--- Response Mode: Chat ---\n' +
@@ -688,7 +690,12 @@
       try {
         const arr = Array.isArray(badges) ? badges.filter(Boolean) : [];
         if (!arr.length) return '';
-        return `<div class="chat-badges">${arr.map(b => `<span class="chat-badge">${this.escapeHtml(String(b ?? ''))}</span>`).join('')}</div>`;
+        const html = arr.map(b => {
+          const s = String(b ?? '');
+          if (s.indexOf('tool-exec-badge') !== -1 || (s.trim().startsWith('<') && s.indexOf('>') !== -1)) return s;
+          return '<span class="chat-badge">' + this.escapeHtml(s) + '</span>';
+        }).join('');
+        return '<div class="chat-badges">' + html + '</div>';
       } catch { return ''; }
     },
 
@@ -908,7 +915,7 @@
         ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {})
       };
       try {
-        const res = await bridge.trigger('agent_automation', payload, {
+        const res = await bridge.trigger(opts.event || 'agent_automation', payload, {
           source: opts.source || 'agent-chat',
           url,
           authHeaderName: cfg.authHeaderName,
@@ -1294,45 +1301,88 @@
       } catch { return Array.isArray(messages) ? messages : []; }
     },
 
-    getBuiltinToolSpecs() {
-      // Expose remote/local shell as a callable tool so LLM can request execution via tool_calls
-      return [{
+    getBuiltinToolSpecs(opts = {}) {
+      const specs = [];
+      specs.push({
+        type: 'function',
+        function: {
+          name: 'write_file',
+          description: 'Create or overwrite a workspace file in the in-browser project with full content (browser-native web projects).',
+          parameters: { type: 'object', properties: { path: { type: 'string', description: 'Relative workspace file path' }, content: { type: 'string', description: 'Full file content' } }, required: ['path', 'content'] }
+        },
+        _builtin: { name: 'write_file' }
+      });
+      specs.push({
+        type: 'function',
+        function: {
+          name: 'edit_file',
+          description: 'Edit/replace a workspace file in the in-browser project by writing updated full content.',
+          parameters: { type: 'object', properties: { path: { type: 'string', description: 'Relative workspace file path' }, content: { type: 'string', description: 'New full file content' } }, required: ['path', 'content'] }
+        },
+        _builtin: { name: 'edit_file' }
+      });
+      specs.push({
         type: 'function',
         function: {
           name: 'run_shell',
           description: 'Execute a terminal/shell command in the configured Remote Runner (if set) or in the browser sandbox. Returns command output.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { type: 'string', description: 'Shell command to execute' }
-            },
-            required: ['command']
-          }
+          parameters: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to execute' } }, required: ['command'] }
         },
         _builtin: { name: 'run_shell' }
-      }];
+      });
+      specs.push({
+        type: 'function',
+        function: {
+          name: 'codespace_exec',
+          description: 'Execute a command via MCP/Remote Terminal Runner (preferred for shell commands, package installs, Python/Node scripts, backend tests). Falls back to local/remote runner execution when direct MCP tool is unavailable.',
+          parameters: { type: 'object', properties: { command: { type: 'string', description: 'Command to execute' }, cwd: { type: 'string', description: 'Optional working directory' } }, required: ['command'] }
+        },
+        _builtin: { name: 'codespace_exec' }
+      });
+      let hasN8n = false;
+      try { const cfg = (typeof this.getSavedN8nConfig === 'function') ? this.getSavedN8nConfig() : null; hasN8n = !!(cfg && String(cfg.url || '').trim()); } catch {}
+      if (hasN8n) {
+        specs.push({
+          type: 'function',
+          function: {
+            name: 'trigger_n8n_workflow',
+            description: 'Trigger/run the configured n8n automation workflow by POSTing a JSON payload to the saved n8n Integration Webhook URL with its configured Auth header.',
+            parameters: { type: 'object', properties: { payload: { type: 'object', description: 'JSON payload/data to send to the n8n webhook' }, message: { type: 'string', description: 'Optional message to include' }, event: { type: 'string', description: 'Optional event name' } } }
+          },
+          _builtin: { name: 'trigger_n8n_workflow' }
+        });
+      }
+      return specs;
     },
 
     getLlmTools() {
       const tools = [];
-      // Dynamic MCP tools from enabled/discovered servers (only include when actually available)
       try {
         const mcpSpecs = this.getMcpToolSpecs();
         if (Array.isArray(mcpSpecs) && mcpSpecs.length) tools.push(...mcpSpecs);
-      } catch { /* ignore */ }
-      // Do NOT include builtin shell tool by default - it forces every request to send `tools`
-      // which many upstreams/proxies reject. Shell execution is handled via structured actions.
-      // Validate: ensure every tool has valid name, description, parameters
-      return tools.filter(t => {
+      } catch {}
+      try {
+        const builtins = this.getBuiltinToolSpecs();
+        if (Array.isArray(builtins) && builtins.length) tools.push(...builtins);
+      } catch {}
+      const seen = new Set();
+      const deduped = [];
+      for (const tool of tools) {
         try {
-          if (!t || t.type !== 'function' || !t.function) return false;
-          const fn = t.function;
+          const name = tool && tool.function && tool.function.name ? String(tool.function.name) : '';
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          deduped.push(tool);
+        } catch {}
+      }
+      return deduped.filter(tool => {
+        try {
+          if (!tool || tool.type !== 'function' || !tool.function) return false;
+          const fn = tool.function;
           if (!fn.name || typeof fn.name !== 'string') return false;
           if (!/^[a-zA-Z0-9_-]{1,64}$/.test(fn.name)) return false;
-          if (typeof fn.description !== 'string') fn.description = String(fn.description || '');
-          if (!fn.parameters || typeof fn.parameters !== 'object' || Array.isArray(fn.parameters)) {
-            fn.parameters = { type: 'object', properties: {} };
-          }
+          if (typeof fn.description !== 'string') fn.description = String(fn.description || fn.name || '');
+          if (!fn.parameters || typeof fn.parameters !== 'object' || Array.isArray(fn.parameters)) fn.parameters = { type: 'object', properties: {} };
           return true;
         } catch { return false; }
       });
@@ -1397,6 +1447,173 @@
       } catch {
         try { return String(value == null ? '' : value).slice(0, 280); } catch { return '(unavailable)'; }
       }
+    },
+
+    toolResultToText(value) {
+      try {
+        if (value == null) return '';
+        if (typeof value === 'string') return value;
+        if (value && typeof value === 'object') {
+          if (Array.isArray(value.content)) {
+            const parts = value.content.map(part => {
+              if (!part) return '';
+              if (typeof part === 'string') return part;
+              if (part.type === 'text' && typeof part.text === 'string') return part.text;
+              if (typeof part.text === 'string') return part.text;
+              try { return JSON.stringify(part); } catch { return String(part); }
+            }).filter(Boolean);
+            if (parts.length) return parts.join('\n');
+          }
+          if (typeof value.text === 'string') return value.text;
+          if (typeof value.stdout === 'string' || typeof value.stderr === 'string') {
+            const out = String(value.stdout || '').trim();
+            const err = String(value.stderr || '').trim();
+            let s = out || '';
+            if (err) s += (s ? '\n[stderr]\n' : '[stderr]\n') + err;
+            if (!s && value.error) s = String(value.error);
+            return s;
+          }
+          try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+        }
+        return String(value);
+      } catch { try { return String(value); } catch { return ''; } }
+    },
+
+    formatToolBadge(label, detail, ok = true) {
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const base = esc(String(label || 'Tool executed').trim());
+      const det = String(detail || '').trim();
+      const body = det ? '<pre class="tool-badge-output">' + esc(det) + '</pre>' : '';
+      return '<details class="tool-exec-badge"><summary><span class="tool-badge-status ' + (ok ? 'ok' : 'err') + '">' + (ok ? '✓' : '✗') + '</span><span class="tool-badge-text">' + base + '</span></summary>' + body + '</details>';
+    },
+
+    async executeBuiltinToolCall(toolName, args = {}, ctx = {}) {
+      const name = String(toolName || '').trim();
+      const a = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+      if (name === 'write_file' || name === 'edit_file') {
+        const path = String(a.path || a.filePath || a.file || '').replace(/^\/+/, '').trim();
+        const content = (a.content != null) ? String(a.content) : (a.text != null ? String(a.text) : null);
+        if (!path) return { ok: false, error: 'Missing path', text: 'Missing path', badge: this.formatToolBadge(name + ': missing path', 'Missing path', false) };
+        if (content == null) return { ok: false, error: 'Missing content', text: 'Missing content', badge: this.formatToolBadge(name + ': ' + path, 'Missing content', false) };
+        if (!window.Editor || typeof Editor.applyEdits !== 'function') return { ok: false, error: 'Editor unavailable', text: 'Editor unavailable', badge: this.formatToolBadge(name + ': ' + path, 'Editor unavailable', false) };
+        const existed = !!(window.AppState && AppState.files && AppState.files.has(path));
+        const pill = this.addStatusPill((existed ? '📝 Editing ' : '📝 Writing ') + path + '...', 'running');
+        try {
+          const applied = Editor.applyEdits([{ path, content }]) || [];
+          const ok = applied.length > 0;
+          this.updateStatusPill(pill, ok ? (existed ? '📝 Edited ' : '📝 Wrote ') + path : '📝 Failed ' + path, ok ? 'done' : 'error');
+          if (ok && window.App && App.setView) App.setView('editor');
+          const msg = ok ? ((existed ? 'Edited file: ' : 'Created file: ') + path) : ('Failed to write file: ' + path);
+          return { ok, text: msg, applied: applied[0] || null, badge: this.formatToolBadge(existed ? 'Edited file' : 'Wrote file', path, ok) };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, '📝 File edit failed', 'error');
+          return { ok: false, error: msg, text: msg, badge: this.formatToolBadge('Edit file', path + '\n' + msg, false) };
+        }
+      }
+      if (name === 'codespace_exec' || name === 'run_shell' || name === 'terminal' || name === ':terminal' || name === 'shell') {
+        const cmd = String(a.command || a.cmd || a.code || '').trim();
+        if (!cmd) return { ok: false, error: 'Missing command', text: 'Missing command', badge: this.formatToolBadge('Ran terminal command', 'Missing command', false) };
+        if (name === 'codespace_exec' && window.MCP && typeof MCP.getAllTools === 'function' && typeof MCP.callTool === 'function') {
+          try {
+            const tools = MCP.getAllTools() || [];
+            const m = tools.find(x => String(x && (x.name || x.id) || '').toLowerCase() === 'codespace_exec');
+            if (m && m.server) {
+              const pill = this.addStatusPill('▶ Running remotely (MCP): ' + cmd.slice(0,40), 'running');
+              const result = await MCP.callTool(m.server, m.name || m.id || 'codespace_exec', { command: cmd, ...(a.cwd ? { cwd: a.cwd } : {}) });
+              const text = this.toolResultToText(result);
+              const ok = !(result && typeof result === 'object' && (result.isError || result.error || result.ok === false));
+              this.updateStatusPill(pill, ok ? '✓ Ran terminal command (MCP)' : '✗ Terminal command failed (MCP)', ok ? 'done' : 'error');
+              return { ok, text: text || '(no output)', raw: result, cmd, badge: this.formatToolBadge('Ran terminal command', ('$ ' + cmd + '\n' + (text || '(no output)')).slice(0, 4000), ok) };
+            }
+          } catch (e) { /* fallback */ }
+        }
+        if (!window.TerminalPanel || typeof TerminalPanel.executeCommand !== 'function') {
+          return { ok: false, error: 'Terminal not available', text: 'Terminal not available', cmd, badge: this.formatToolBadge('Ran terminal command', '$ ' + cmd + '\nTerminal not available', false) };
+        }
+        const configured = TerminalPanel.getConfiguredUrl ? TerminalPanel.getConfiguredUrl() : '';
+        const willRemote = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl()) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!configured;
+        const pill = this.addStatusPill((willRemote ? '▶ Running remotely: ' : '▶ Running: ') + cmd.slice(0,40), 'running');
+        try {
+          const r = await TerminalPanel.executeCommand(cmd);
+          const ok = r && r.ok !== false;
+          const out = String((r && (r.stdout || r.output)) || '').trim();
+          const err = String((r && r.stderr) || '').trim();
+          let text = out || '';
+          if (err) text += (text ? '\n[stderr]\n' : '[stderr]\n') + err;
+          if (!text) text = ok ? '(no output)' : (err || r?.error || r?.message || 'Command failed');
+          const failMsg = !ok ? (err || r?.error || r?.message || 'Command failed').slice(0, 60) : '';
+          this.updateStatusPill(pill, ok ? '✓ Ran terminal command' : '✗ ' + (failMsg || 'Command failed'), ok ? 'done' : 'error');
+          return { ok, text, raw: r, cmd, badge: this.formatToolBadge('Ran terminal command', ('$ ' + cmd + '\n' + text).slice(0, 4000), ok) };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, '✗ Command failed', 'error');
+          return { ok: false, error: msg, text: msg, cmd, badge: this.formatToolBadge('Ran terminal command', ('$ ' + cmd + '\n' + msg).slice(0, 4000), false) };
+        }
+      }
+      if (name === 'trigger_n8n_workflow' || name === 'trigger_n8n' || name === 'n8n_trigger_workflow') {
+        let payload = a.payload;
+        if (payload == null) {
+          const rest = { ...a }; delete rest.payload;
+          payload = Object.keys(rest).length ? rest : {};
+        }
+        if (typeof payload === 'string') {
+          const parsed = Utils.safeJsonParse(payload, null);
+          payload = (parsed && typeof parsed === 'object') ? parsed : { message: payload };
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) payload = { value: payload };
+        if (a.message && payload.message == null) payload.message = String(a.message);
+        const event = a.event || payload.event || 'agent_tool';
+        const pill = this.addStatusPill('⚡ Triggering n8n workflow...', 'running');
+        try {
+          const fallbackMsg = String((ctx && ctx.prompt) || payload.message || 'Run automation workflow');
+          const r = await this.triggerN8n(payload.message || fallbackMsg, payload, { source: 'agent-autonomous', showErrors: false, event });
+          const ok = !!(r && r.ok);
+          const body = r && r.result ? r.result.body : (r && r.error ? r.error : null);
+          const text = ok ? this.formatN8nBody(body) : (r && r.error ? String(r.error) : 'Trigger failed');
+          this.updateStatusPill(pill, ok ? '⚡ Triggered n8n workflow' : '⚡ n8n workflow failed', ok ? 'done' : (r && r.error === 'not_configured' ? 'warn' : 'error'));
+          return { ok, text, raw: r, badge: this.formatToolBadge('Triggered n8n workflow', String(text || '').slice(0, 4000), ok) };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, '⚡ n8n workflow failed', 'error');
+          return { ok: false, error: msg, text: msg, badge: this.formatToolBadge('Triggered n8n workflow', msg, false) };
+        }
+      }
+      return { ok: false, error: 'Unsupported builtin tool: ' + name, text: 'Unsupported builtin tool: ' + name };
+    },
+
+    async executeToolCallByName(toolName, args = {}, ctx = {}) {
+      const name = String(toolName || '');
+      const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(name) : null;
+      if (mcpTarget && (window.MCPClient || window.MCP) && typeof (window.MCPClient || window.MCP).callTool === 'function') {
+        const argPreview = (typeof this.formatToolArgsPreview === 'function') ? this.formatToolArgsPreview(args) : '';
+        const pill = this.addStatusPill('🔌 MCP ' + mcpTarget.server + ':' + mcpTarget.tool + (argPreview ? ' (' + argPreview + ')' : '') + '...', 'running');
+        try {
+          const result = await (window.MCPClient || window.MCP).callTool(mcpTarget.server, mcpTarget.tool, args);
+          const text = this.toolResultToText(result);
+          this.updateStatusPill(pill, '🔌 MCP ' + mcpTarget.server + ':' + mcpTarget.tool + ' completed', 'done');
+          return { ok: true, text: text || '(no output)', raw: result, badge: this.formatToolBadge('MCP: ' + mcpTarget.server + ':' + mcpTarget.tool, (text || '(no output)').slice(0, 4000), true) };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, '🔌 MCP ' + mcpTarget.server + ':' + mcpTarget.tool + ' failed', 'error');
+          return { ok: false, error: msg, text: msg, raw: null, badge: this.formatToolBadge('MCP: ' + mcpTarget.server + ':' + mcpTarget.tool, msg, false) };
+        }
+      }
+      if (ctx && ctx.server && ctx.tool && (window.MCPClient || window.MCP) && typeof (window.MCPClient || window.MCP).callTool === 'function') {
+        const server = String(ctx.server), tool = String(ctx.tool);
+        const pill = this.addStatusPill('🔌 MCP ' + server + ':' + tool + '...', 'running');
+        try {
+          const result = await (window.MCPClient || window.MCP).callTool(server, tool, args);
+          const text = this.toolResultToText(result);
+          this.updateStatusPill(pill, '🔌 MCP ' + server + ':' + tool + ' completed', 'done');
+          return { ok: true, text: text || '(no output)', raw: result, badge: this.formatToolBadge('MCP: ' + server + ':' + tool, (text || '(no output)').slice(0, 4000), true) };
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          this.updateStatusPill(pill, '🔌 MCP ' + server + ':' + tool + ' failed', 'error');
+          return { ok: false, error: msg, text: msg, raw: null, badge: this.formatToolBadge('MCP: ' + server + ':' + tool, msg, false) };
+        }
+      }
+      return this.executeBuiltinToolCall(name, args, ctx);
     },
 
     formatSearchResults(data) {
@@ -2149,23 +2366,25 @@
 
     buildActionBadges(execSummary = [], toolNotes = [], applied = [], cmdResults = [], extras = []) {
       const badges = [];
-      // Tool execution status is shown via live progress pills above the message.
-      // Avoid duplicating web-search/tool-execution pills in the message footer badges.
+      for (const item of (execSummary || [])) {
+        if (!item) continue;
+        if (typeof item === 'string' && item.indexOf('tool-exec-badge') !== -1) badges.push(item);
+      }
       for (const a of (applied || [])) {
         if (!a || !a.path) continue;
-        badges.push(`${a.created ? '✓ Created' : '✓ Updated'} ${a.path}`);
+        badges.push((a.created ? '✓ Created ' : '✓ Updated ') + a.path);
       }
       for (const r of (cmdResults || [])) {
         if (!r || !r.cmd) continue;
+        if (badges.some(b => typeof b === 'string' && b.indexOf('Ran terminal command') !== -1)) continue;
         const short = String(r.cmd).length > 42 ? String(r.cmd).slice(0, 39) + '…' : String(r.cmd);
-        if (r.mode === 'browser' && !r.remote) badges.push(`✓ Ran in sandbox: ${short}`);
-        else if (r.remote) badges.push(`✓ Ran remotely: ${short}`);
-        else badges.push(`✓ Ran: ${short}`);
+        if (r.mode === 'browser' && !r.remote) badges.push('✓ Ran in sandbox: ' + short);
+        else if (r.remote) badges.push('✓ Ran remotely: ' + short);
+        else badges.push('✓ Ran: ' + short);
       }
       for (const e of (extras || [])) { if (e) badges.push(e); }
-      // de-dupe preserving order
       const seen = new Set();
-      return badges.filter(b => { const k = String(b).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
+      return badges.filter(b => { const k = typeof b === 'string' ? b : JSON.stringify(b); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
     },
 
     async runPrompt(prompt, opts = {}) {
@@ -2173,7 +2392,7 @@
       const useRagEl = document.getElementById('agentUseRag');
       const autoApplyEl = document.getElementById('agentAutoApply');
       const useRag = opts.useRag ?? (useRagEl ? useRagEl.checked : true);
-      const autoApply = autoApplyEl ? autoApplyEl.checked : true;
+      const autoApply = autoApplyEl ? autoApplyEl.checked : ((AppState && AppState.settings && typeof AppState.settings.autoApplyEdits === 'boolean') ? AppState.settings.autoApplyEdits : true);
       const toolNotes = [];
       let extraContext = '';
       let ragMeta = '';
@@ -2266,6 +2485,14 @@
       }
 
       // MCP: expose available tools (configured in Settings/Vault) for autonomous decisions (context + dynamic tool schema)
+      try {
+        if (window.MCP && typeof MCP.connectAll === 'function' && MCP.connections && MCP.connections.size === 0 && Array.isArray(AppState.mcpServers) && AppState.mcpServers.length) {
+          await Promise.race([
+            (async () => { try { await MCP.connectAll(AppState.mcpServers); if (typeof MCP.discoverAll === 'function') await MCP.discoverAll(); } catch {} })(),
+            new Promise(r => setTimeout(r, 1500))
+          ]);
+        }
+      } catch {}
       const mcpTools = (window.MCP && MCP.getAllTools) ? MCP.getAllTools() : [];
       const llmTools = (typeof this.getLlmTools === 'function') ? this.getLlmTools() : [];
       if (mcpTools.length) {
@@ -2338,52 +2565,21 @@
               const fargs = (typeof this.normalizeToolCallArgs === 'function')
                 ? this.normalizeToolCallArgs(fargsRaw)
                 : (Utils.safeJsonParse(fargsRaw, {}) || {});
-              const argPreview = (typeof this.formatToolArgsPreview === 'function') ? Agent.formatToolArgsPreview(fargs) : '';
               let toolResultText = '';
+              let toolExec = null;
               try {
-                const mcpTarget = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(fname) : null;
-                if (mcpTarget && (window.MCPClient || window.MCP) && typeof (window.MCPClient || window.MCP).callTool === 'function') {
-                  const pillLabel = `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` (${argPreview})` : ''}...`;
-                  const pill = this.addStatusPill(pillLabel, 'running');
-                  try {
-                    const result = await (window.MCPClient || window.MCP).callTool(mcpTarget.server, mcpTarget.tool, fargs);
-                    toolResultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` [${argPreview}]` : ''} (tool_call) result: ${this.formatN8nBody(result).slice(0, 500)}`);
-                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} completed`, 'done');
-                  } catch (e) {
-                    toolResultText = `Error: ${e.message || e}`;
-                    execSummary.push(`MCP ${mcpTarget.server}:${mcpTarget.tool}${argPreview ? ` [${argPreview}]` : ''} (tool_call) failed: ${e.message || e}`);
-                    this.updateStatusPill(pill, `🔌 MCP ${mcpTarget.server}:${mcpTarget.tool} failed`, 'error');
-                  }
-                } else if (fname === 'run_shell' || fname === 'terminal' || fname === ':terminal') {
-                  const cmd = (fargs && (fargs.command || fargs.cmd)) ? String(fargs.command || fargs.cmd) : (argPreview || '');
-                  if (cmd && window.TerminalPanel && typeof TerminalPanel.executeCommand === 'function') {
-                    const configured = TerminalPanel.getConfiguredUrl ? TerminalPanel.getConfiguredUrl() : '';
-                    const willRemote = !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl()) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!configured;
-                    const pill = this.addStatusPill(willRemote ? `▶ Running remotely: ${cmd.slice(0,40)}` : `▶ Running: ${cmd.slice(0,40)}`, 'running');
-                    const r = await TerminalPanel.executeCommand(cmd);
-                    const ok = r && r.ok !== false;
-                    const out = String((r && (r.stdout || r.output)) || '').trim();
-                    const err = String((r && r.stderr) || '').trim();
-                    toolResultText = (out || '') + (err ? (out ? '\n[stderr]\n' : '[stderr]\n') + err : '');
-                    if (!toolResultText) toolResultText = ok ? '(no output)' : (err || r?.error || r?.message || 'Command failed');
-                    const usedRemote = (r && (r.mode === 'remote' || r.mode === 'remote-http')) || (TerminalPanel.socket && TerminalPanel.socket.readyState === WebSocket.OPEN) || !!(TerminalPanel.getHttpRunnerUrl && TerminalPanel.getHttpRunnerUrl());
-                    cmdResults.push({ cmd, ...(r || {}), remote: usedRemote });
-                    execSummary.push(`${ok ? 'Ran' : 'Failed'} command (${usedRemote ? 'remote' : 'browser'}): ${cmd}${!ok && err ? ` — ${err.slice(0,120)}` : ''}`);
-                    const failMsg = !ok ? (err || r?.error || r?.message || 'Command failed').slice(0, 60) : '';
-                    this.updateStatusPill(pill, ok ? (usedRemote ? '✓ Ran remotely' : `✓ Ran: ${cmd.slice(0,36)}`) : `✗ ${failMsg || 'Command failed'}`, ok ? 'done' : 'error');
-                  } else {
-                    toolResultText = 'Error: terminal not available or missing command';
-                  }
-                } else {
-                  toolResultText = `Unknown or unsupported tool: ${fname}`;
-                }
+                toolExec = await this.executeToolCallByName(fname, fargs, { prompt });
+                toolResultText = this.toolResultToText(toolExec && (toolExec.text != null ? toolExec.text : (toolExec.raw != null ? toolExec.raw : (toolExec.error || ''))));
+                if (!toolResultText && toolExec && toolExec.error) toolResultText = 'Error: ' + toolExec.error;
+                if (toolExec && toolExec.badge) execSummary.push(toolExec.badge);
+                if (toolExec && toolExec.cmd) cmdResults.push({ cmd: toolExec.cmd, ...(toolExec.raw || {}), remote: !!(toolExec.raw && (toolExec.raw.mode === 'remote' || toolExec.raw.mode === 'remote-http')) });
+                if (toolExec && toolExec.applied) applied.push(toolExec.applied);
               } catch (e) {
-                toolResultText = `Tool execution error: ${e.message || e}`;
+                toolResultText = 'Tool execution error: ' + (e.message || e);
               }
               messages.push({
                 role: 'tool',
-                tool_call_id: tc.id || `call_${Math.random().toString(36).slice(2)}`,
+                tool_call_id: tc.id || ('call_' + Math.random().toString(36).slice(2)),
                 content: this.truncateForModel(typeof toolResultText === 'string' ? toolResultText : JSON.stringify(toolResultText), 12000)
               });
             }
@@ -2419,23 +2615,25 @@
           for (const call of _calls) {
             let server = call.server || call.serverName; let tool = call.tool || call.name || call.toolName;
             const args = (typeof this.normalizeToolCallArgs === 'function') ? this.normalizeToolCallArgs(call.arguments || call.args || call.input || {}) : (call.arguments || call.args || {});
+            let fname = String(call.name || tool || '');
             if ((!server || !tool) && call.name) {
               const p = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
-              if (p) { server = p.server; tool = p.tool; }
+              if (p) { server = p.server; tool = p.tool; fname = call.name; }
             }
-            if (!server || !tool) continue;
-            const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}...`, 'running');
-            try {
-              const result = await _mcpClient.callTool(server, tool, args);
-              const txt = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-              this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
-              execSummary.push(`MCP ${server}:${tool} result: ${txt.slice(0, 500)}`);
-              _results.push(`[MCP ${server}:${tool} RESULT]\n${txt}`);
-            } catch (e) {
-              const msg = e && e.message ? e.message : String(e);
-              this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
-              _results.push(`[MCP ${server}:${tool} ERROR]\n${msg}`);
+            if (server && tool) {
+              const ex = await this.executeToolCallByName(fname || ('mcp__' + server + '__' + tool), args, { prompt, server, tool });
+              const txt = String((ex && (ex.text || ex.error)) || '').trim();
+              if (ex && ex.badge) execSummary.push(ex.badge);
+              if (ex && ex.applied) applied.push(ex.applied);
+              _results.push('[TOOL ' + server + ':' + tool + ' ' + ((ex && ex.ok) ? 'RESULT' : 'ERROR') + ']\n' + (txt || '(no output)'));
+              continue;
             }
+            if (!fname) continue;
+            const ex = await this.executeToolCallByName(fname, args, { prompt });
+            const txt = String((ex && (ex.text || ex.error)) || '').trim();
+            if (ex && ex.badge) execSummary.push(ex.badge);
+            if (ex && ex.applied) applied.push(ex.applied);
+            _results.push('[TOOL ' + fname + ' ' + ((ex && ex.ok) ? 'RESULT' : 'ERROR') + ']\n' + (txt || '(no output)'));
           }
           if (!_results.length) break;
           const cont = prompt + '\n\n[Autonomous MCP tool execution results]\n' + _results.join('\n\n').slice(0, 12000) + '\n\nContinue with these results and provide the final plain-English response. Do not repeat the same tool call unless necessary.';
@@ -2488,28 +2686,23 @@
         }
       }
 
-      // MCP tool calls requested by agent in structured action blocks
-      if (actions.mcp && actions.mcp.length && (window.MCPClient || window.MCP) && (window.MCPClient || window.MCP).callTool) {
+      // MCP/tool calls requested by agent in structured action blocks (fallback path)
+      if (actions.mcp && actions.mcp.length) {
         for (const call of actions.mcp) {
           let server = call.server || call.serverName;
           let tool = call.tool || call.name || call.toolName;
-          const rawArgs = call.arguments || call.args || {};
+          const rawArgs = call.arguments || call.args || call.input || {};
           const args = this.normalizeToolCallArgs(rawArgs);
-          const argPreview = Agent.formatToolArgsPreview(args);
+          let fname = String(call.name || tool || '');
           if ((!server || !tool) && call.name) {
             const parsed = (typeof this.parseMcpPrefixedToolName === 'function') ? this.parseMcpPrefixedToolName(call.name) : null;
-            if (parsed) { server = parsed.server; tool = parsed.tool; }
+            if (parsed) { server = parsed.server; tool = parsed.tool; fname = call.name; }
           }
-          if (!server || !tool) continue;
-          const pill = this.addStatusPill(`🔌 MCP ${server}:${tool}${argPreview ? ` (${argPreview})` : ''}...`, 'running');
-          try {
-            const result = await (window.MCPClient || window.MCP).callTool(server, tool, args);
-            execSummary.push(`MCP ${server}:${tool}${argPreview ? ` [${argPreview}]` : ''} result: ${this.formatN8nBody(result).slice(0, 500)}`);
-            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} completed`, 'done');
-          } catch (e) {
-            execSummary.push(`MCP ${server}:${tool}${argPreview ? ` [${argPreview}]` : ''} failed: ${e.message}`);
-            this.updateStatusPill(pill, `🔌 MCP ${server}:${tool} failed`, 'error');
-          }
+          if (!server && !tool && !fname) continue;
+          const ex = await this.executeToolCallByName(fname || (server && tool ? ('mcp__' + server + '__' + tool) : ''), args, { prompt, server, tool });
+          if (ex && ex.badge) execSummary.push(ex.badge);
+          if (ex && ex.applied) applied.push(ex.applied);
+          if (ex && ex.cmd) cmdResults.push({ cmd: ex.cmd, ...(ex.raw || {}) });
         }
       }
 

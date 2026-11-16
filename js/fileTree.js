@@ -5,6 +5,11 @@
       document.getElementById('btnNewFile').addEventListener('click', () => this.newFilePrompt());
       document.getElementById('btnDeleteFile').addEventListener('click', () => this.deleteActive());
       document.getElementById('btnSaveFile').addEventListener('click', () => this.saveActiveFile());
+      const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+      bind('btnSaveAllFiles', () => this.saveAllFiles());
+      bind('btnDownloadFile', () => this.downloadActiveFile());
+      bind('btnDownloadZip', () => this.downloadWorkspaceZip());
+      bind('btnEditorDownloadFile', () => this.downloadActiveFile());
       AppState.subscribe((evt) => {
         if (['workspace:changed','workspace:reset','file:changed','file:active'].includes(evt)) this.render();
       });
@@ -179,15 +184,22 @@
       Utils.toast(`Removed ${path} from workspace (local disk item not deleted)`, 'info');
     },
 
-    async saveActiveFile(silent = false) {
-      const file = AppState.getActiveFile();
-      if (!file) { if (!silent) Utils.toast('No active file', 'error'); return; }
+    async saveFileEntry(file, silent = false) {
+      if (!file) { if (!silent) Utils.toast('No file to save', 'error'); return false; }
       try {
+        if (file.binary && !(file.handle && file.handle.createWritable)) {
+          file.dirty = false;
+          AppState.exportMemoryWorkspace();
+          AppState.emit('file:changed', { path: file.path });
+          if (!silent) Utils.toast(`Saved ${file.path}`, 'success');
+          return true;
+        }
         if (file.handle && file.handle.createWritable) {
           const writable = await file.handle.createWritable();
           await writable.write(file.content ?? '');
           await writable.close();
           file.dirty = false;
+          AppState.exportMemoryWorkspace();
           AppState.emit('file:changed', { path: file.path });
           if (!silent) Utils.toast(`Saved ${file.path}`, 'success');
           return true;
@@ -199,6 +211,7 @@
             await writable.write(file.content ?? '');
             await writable.close();
             file.handle = handle; file.dirty = false;
+            AppState.exportMemoryWorkspace();
             AppState.emit('file:changed', { path: file.path });
             if (!silent) Utils.toast(`Saved ${file.path}`, 'success');
             return true;
@@ -211,6 +224,117 @@
         return true;
       } catch (e) {
         if (!silent) Utils.toast(`Save failed: ${e.message}`, 'error');
+        return false;
+      }
+    },
+
+    async saveActiveFile(silent = false) {
+      const file = AppState.getActiveFile();
+      if (!file) { if (!silent) Utils.toast('No active file', 'error'); return false; }
+      return this.saveFileEntry(file, silent);
+    },
+
+    async saveAllFiles(silent = false) {
+      try {
+        const files = Array.from(AppState.files.values());
+        const dirty = files.filter(f => f && f.dirty);
+        if (!dirty.length) {
+          try { AppState.exportMemoryWorkspace(); } catch {}
+          if (!silent) Utils.toast('No unsaved changes', 'info');
+          return { saved: 0, failed: 0 };
+        }
+        let saved = 0, failed = 0;
+        for (const file of dirty) {
+          const ok = await this.saveFileEntry(file, true);
+          if (ok) saved++; else failed++;
+        }
+        try { AppState.exportMemoryWorkspace(); } catch {}
+        if (AppState.activeFilePath) AppState.emit('file:changed', { path: AppState.activeFilePath });
+        AppState.emit('workspace:changed');
+        if (!silent) {
+          if (failed) Utils.toast(`Saved ${saved} file(s), ${failed} failed`, 'error');
+          else Utils.toast(`Saved all (${saved} file${saved === 1 ? '' : 's'})`, 'success');
+        }
+        return { saved, failed };
+      } catch (e) {
+        if (!silent) Utils.toast(`Save All failed: ${e.message}`, 'error');
+        return { saved: 0, failed: 0, error: e };
+      }
+    },
+
+    downloadBlob(blob, filename) {
+      try {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'download';
+        a.rel = 'noopener';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 1500);
+        return true;
+      } catch (e) {
+        console.error('Download failed', e);
+        return false;
+      }
+    },
+
+    downloadActiveFile() {
+      try {
+        const file = AppState.getActiveFile();
+        if (!file) { Utils.toast('No active file to download', 'error'); return false; }
+        const name = (window.Utils && Utils.basename) ? (Utils.basename(file.path || 'untitled.txt') || 'untitled.txt') : (String(file.path || 'untitled.txt').split('/').pop() || 'untitled.txt');
+        const content = (file.content == null ? '' : String(file.content));
+        const type = (file.binary && file.meta && file.meta.mime) ? String(file.meta.mime) : 'text/plain;charset=utf-8';
+        const blob = new Blob([content], { type });
+        const ok = this.downloadBlob(blob, name);
+        if (ok) Utils.toast(`Downloaded ${name}`, 'success');
+        else Utils.toast('Download failed', 'error');
+        return ok;
+      } catch (e) {
+        Utils.toast(`Download failed: ${e.message}`, 'error');
+        return false;
+      }
+    },
+
+    async downloadWorkspaceZip() {
+      try {
+        const JSZipCtor = window.JSZip;
+        if (!JSZipCtor) {
+          Utils.toast('JSZip is not available (zip library failed to load)', 'error');
+          return false;
+        }
+        const zip = new JSZipCtor();
+        let count = 0;
+        for (const [path, file] of AppState.files.entries()) {
+          if (!file) continue;
+          const cleanPath = String(path || '').replace(/^\/+/, '');
+          if (!cleanPath) continue;
+          if (file.binary) {
+            const ab = file.meta && file.meta.arrayBuffer;
+            if (ab instanceof ArrayBuffer) zip.file(cleanPath, ab);
+            else if (ab instanceof Uint8Array) zip.file(cleanPath, ab);
+            else if (ab && ab.buffer instanceof ArrayBuffer && typeof ab.byteLength === 'number') zip.file(cleanPath, ab);
+            else zip.file(cleanPath, String(file.content == null ? '' : file.content));
+          } else {
+            zip.file(cleanPath, String(file.content == null ? '' : file.content));
+          }
+          count++;
+        }
+        if (!count) {
+          Utils.toast('Workspace is empty', 'error');
+          return false;
+        }
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        const ok = this.downloadBlob(blob, 'apex-project.zip');
+        if (ok) Utils.toast(`Downloaded apex-project.zip (${count} file${count === 1 ? '' : 's'})`, 'success');
+        else Utils.toast('ZIP download failed', 'error');
+        return ok;
+      } catch (e) {
+        console.error('ZIP download failed', e);
+        Utils.toast(`ZIP download failed: ${e.message}`, 'error');
         return false;
       }
     },

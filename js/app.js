@@ -562,6 +562,8 @@
         const ep = document.getElementById('agentEndpoint'); if (ep) AppState.settings.agentEndpoint = (ep.value || '').trim();
         const model = document.getElementById('agentModel'); if (model) AppState.settings.agentModel = (model.value || '').trim();
         const prov = document.getElementById('agentProvider'); if (prov) AppState.settings.agentProvider = prov.value || 'openai-compatible';
+        const autoApplyEl = document.getElementById('agentAutoApply');
+        if (autoApplyEl) AppState.settings.autoApplyEdits = !!autoApplyEl.checked;
         // Persist API keys from Settings modal
         try {
           const keysEl = document.getElementById('apiKeysInput');
@@ -795,6 +797,8 @@
       setVal('agentProvider', s.agentProvider || 'openai-compatible');
       const keysEl = document.getElementById('apiKeysInput');
       if (keysEl && Array.isArray(AppState.apiKeys)) keysEl.value = AppState.apiKeys.join('\n');
+      const autoApplyEl = document.getElementById('agentAutoApply');
+      if (autoApplyEl) autoApplyEl.checked = (typeof s.autoApplyEdits === 'boolean') ? s.autoApplyEdits : true;
 
       // Restore MCP Servers configuration so Settings modal reflects persisted state
       const mcpInput = document.getElementById('mcpConfigInput');

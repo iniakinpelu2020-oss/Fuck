@@ -177,6 +177,11 @@
               <input id="workspaceFileUploadInput" type="file" multiple accept="*/*" class="hidden" />
               <div class="grid grid-cols-2 gap-2">
                 <button id="btnNewFile" class="btn-secondary">New File</button>
+                <button id="btnSaveAllFiles" class="btn-secondary" title="Save all modified workspace files and clear Unsaved state">Save All</button>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <button id="btnDownloadFile" class="btn-secondary" title="Download the currently active editor file">Download File</button>
+                <button id="btnDownloadZip" class="btn-secondary" title="Download all workspace files as apex-project.zip">Download ZIP</button>
                 <button id="btnDeleteFile" class="btn-secondary btn-danger-text">Delete Selected</button>
               </div>
               <p class="text-[11px] text-slate-500 leading-relaxed">Use the Directory Picker when available, or work in-memory. Agent can create/edit files automatically.</p>
@@ -221,6 +226,7 @@
               <svg class="w-3.5 h-3.5 text-accent2 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
               <span id="activeFileName" class="truncate text-slate-200">untitled.txt</span>
               <span id="dirtyIndicator" class="hidden badge badge-warn ml-1">● Unsaved</span>
+              <button id="btnEditorDownloadFile" type="button" class="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-300 hover:text-white hover:bg-white/10 border border-border/70 shrink-0" title="Download current file">Download File</button>
             </div>
           </div>
           <div class="flex items-center gap-2">
